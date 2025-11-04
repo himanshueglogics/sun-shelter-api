@@ -21,6 +21,11 @@ mongoose.connect(process.env.MONGODB_URI)
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/beaches', require('./routes/beaches'));
+app.use('/api/bookings', require('./routes/bookings'));
+app.use('/api/finance', require('./routes/finance'));
+app.use('/api/admins', require('./routes/admins'));
+app.use('/api/integrations', require('./routes/integrations'));
 
 // Health check
 app.get('/', (req, res) => {

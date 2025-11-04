@@ -4,15 +4,51 @@ const Booking = require('../models/Booking');
 const Beach = require('../models/Beach');
 const { protect } = require('../middleware/auth');
 
+// @route   GET /api/bookings/stats
+// @desc    Get booking statistics (total, active, cancelled)
+// @access  Private
+router.get('/stats', protect, async (req, res) => {
+  try {
+    const [total, active, cancelled] = await Promise.all([
+      Booking.countDocuments(),
+      Booking.countDocuments({ 
+        status: { $in: ['confirmed', 'pending', 'completed'] } 
+      }),
+      Booking.countDocuments({ status: 'cancelled' })
+    ]);
+    
+    res.json({ total, active, cancelled });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // @route   GET /api/bookings
 // @desc    Get all bookings
 // @access  Private
 router.get('/', protect, async (req, res) => {
   try {
-    const bookings = await Booking.find()
-      .populate('beach', 'name location')
-      .sort({ createdAt: -1 });
-    res.json(bookings);
+    const { page = 1, limit = 10, status, beach, checkInFrom, checkInTo } = req.query;
+    const query = {};
+    if (status) query.status = status;
+    if (beach) query.beach = beach;
+    if (checkInFrom || checkInTo) {
+      query.checkInDate = {};
+      if (checkInFrom) query.checkInDate.$gte = new Date(checkInFrom);
+      if (checkInTo) query.checkInDate.$lte = new Date(checkInTo);
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+    const [items, total] = await Promise.all([
+      Booking.find(query)
+        .populate('beach', 'name location')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit)),
+      Booking.countDocuments(query)
+    ]);
+
+    res.json({ items, total, page: Number(page), pages: Math.ceil(total / Number(limit)) });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -198,12 +198,15 @@ const seedData = async () => {
     console.log('Finance records created');
 
     console.log('\n=== Seed Data Summary ===');
-    console.log('Admin Email: admin@sunshelter.com');
-    console.log('Admin Password: admin123');
-    console.log(`Beaches: ${beaches.length}`);
-    console.log(`Bookings: ${bookings.length}`);
-    console.log(`Alerts: ${alerts.length}`);
-    console.log(`Finance Records: ${finances.length}`);
+    console.log('✅ Super Admin Created:');
+    console.log('   Email: nikhil17607@gmail.com');
+    console.log('   Password: admin123');
+    console.log('   Role: super_admin');
+    console.log(`\n📊 Data Created:`);
+    console.log(`   Beaches: ${beaches.length}`);
+    console.log(`   Bookings: ${bookings.length}`);
+    console.log(`   Alerts: ${alerts.length}`);
+    console.log(`   Finance Records: ${finances.length}`);
     console.log('========================\n');
 
     process.exit(0);
