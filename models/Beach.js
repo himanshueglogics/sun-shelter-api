@@ -66,4 +66,43 @@ beachSchema.methods.recomputeCapacity = function() {
   } catch (_) {}
 };
 
+// Helper method to calculate occupancy rate based on sunbed statuses
+beachSchema.methods.calculateOccupancy = function() {
+  try {
+    let totalSunbeds = 0;
+    let reservedSunbeds = 0;
+    
+    (this.zones || []).forEach(zone => {
+      if (zone.sunbeds && zone.sunbeds.length > 0) {
+        zone.sunbeds.forEach(bed => {
+          // Count available and reserved sunbeds (exclude unavailable)
+          if (bed.status === 'available' || bed.status === 'reserved' || bed.status === 'selected') {
+            totalSunbeds++;
+            if (bed.status === 'reserved' || bed.status === 'selected') {
+              reservedSunbeds++;
+            }
+          }
+        });
+      }
+    });
+    
+    if (totalSunbeds > 0) {
+      this.occupancyRate = Math.round((reservedSunbeds / totalSunbeds) * 100);
+      this.currentBookings = reservedSunbeds;
+    } else {
+      this.occupancyRate = 0;
+      this.currentBookings = 0;
+    }
+  } catch (err) {
+    console.error('Error calculating occupancy:', err);
+  }
+};
+
+// Pre-save hook to automatically update occupancy
+beachSchema.pre('save', function(next) {
+  this.recomputeCapacity();
+  this.calculateOccupancy();
+  next();
+});
+
 module.exports = mongoose.model('Beach', beachSchema);

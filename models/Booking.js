@@ -6,6 +6,14 @@ const bookingSchema = new mongoose.Schema({
     ref: 'Beach',
     required: true
   },
+  zone: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: false
+  },
+  sunbeds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    required: false
+  }],
   customerName: {
     type: String,
     required: true

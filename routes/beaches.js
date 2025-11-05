@@ -107,10 +107,20 @@ function buildSunbeds(rows = 0, cols = 0) {
 // @access  Private
 router.post('/:id/zones', protect, async (req, res) => {
   try {
-    const { name, rows = 0, cols = 0 } = req.body;
+    const { name, rows = 0, cols = 0, sunbeds } = req.body;
     const beach = await Beach.findById(req.params.id);
     if (!beach) return res.status(404).json({ message: 'Beach not found' });
-    const zone = { name, rows, cols, sunbeds: buildSunbeds(rows, cols) };
+    
+    // Use provided sunbeds if available, otherwise generate default ones
+    const zoneSunbeds = sunbeds && sunbeds.length > 0 
+      ? sunbeds.map(bed => ({
+          code: bed.code || `R${bed.row}C${bed.col}`,
+          status: bed.status || 'available',
+          priceModifier: bed.priceModifier || 0
+        }))
+      : buildSunbeds(rows, cols);
+    
+    const zone = { name, rows, cols, sunbeds: zoneSunbeds };
     beach.zones.push(zone);
     beach.recomputeCapacity();
     await beach.save();

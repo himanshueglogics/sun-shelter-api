@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Booking = require('../models/Booking');
 const Beach = require('../models/Beach');
+const Finance = require('../models/Finance');
 const { protect } = require('../middleware/auth');
 
 // @route   GET /api/bookings/stats
@@ -76,12 +77,53 @@ router.post('/', protect, async (req, res) => {
   try {
     const booking = await Booking.create(req.body);
     
-    // Update beach occupancy
-    const beach = await Beach.findById(booking.beach);
-    if (beach) {
-      beach.currentBookings += 1;
-      beach.occupancyRate = (beach.currentBookings / beach.totalCapacity) * 100;
-      await beach.save();
+    // Update sunbed statuses to 'reserved' if sunbeds are specified
+    if (booking.sunbeds && booking.sunbeds.length > 0 && booking.zone) {
+      const beach = await Beach.findById(booking.beach);
+      if (beach) {
+        const zone = beach.zones.id(booking.zone);
+        if (zone) {
+          booking.sunbeds.forEach(sunbedId => {
+            const sunbed = zone.sunbeds.id(sunbedId);
+            if (sunbed && sunbed.status === 'available') {
+              sunbed.status = 'reserved';
+            }
+          });
+          await beach.save(); // This will trigger pre-save hook to update occupancy
+        }
+      }
+    } else {
+      // Fallback: Update beach occupancy manually if no sunbeds specified
+      const beach = await Beach.findById(booking.beach);
+      if (beach) {
+        beach.currentBookings += 1;
+        await beach.save(); // This will trigger pre-save hook
+      }
+    }
+    
+    // Create finance records for the booking
+    if (booking.status === 'confirmed' || booking.status === 'completed') {
+      const rentalIncome = booking.totalAmount * 0.93; // 93% rental income
+      const serviceFee = booking.totalAmount * 0.07; // 7% service fee
+      
+      await Finance.create([
+        {
+          type: 'rental_income',
+          amount: rentalIncome,
+          description: `Rental income from booking ${booking._id}`,
+          booking: booking._id,
+          beach: booking.beach,
+          date: booking.checkInDate
+        },
+        {
+          type: 'service_fee',
+          amount: serviceFee,
+          description: `Service fee from booking ${booking._id}`,
+          booking: booking._id,
+          beach: booking.beach,
+          date: booking.checkInDate
+        }
+      ]);
     }
     
     res.status(201).json(booking);
@@ -95,15 +137,36 @@ router.post('/', protect, async (req, res) => {
 // @access  Private
 router.put('/:id', protect, async (req, res) => {
   try {
+    const oldBooking = await Booking.findById(req.params.id);
+    if (!oldBooking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    
     const booking = await Booking.findByIdAndUpdate(
       req.params.id,
       req.body,
       { new: true, runValidators: true }
     ).populate('beach');
     
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not found' });
+    // If status changed to cancelled, free up the sunbeds
+    if (oldBooking.status !== 'cancelled' && booking.status === 'cancelled') {
+      if (booking.sunbeds && booking.sunbeds.length > 0 && booking.zone) {
+        const beach = await Beach.findById(booking.beach);
+        if (beach) {
+          const zone = beach.zones.id(booking.zone);
+          if (zone) {
+            booking.sunbeds.forEach(sunbedId => {
+              const sunbed = zone.sunbeds.id(sunbedId);
+              if (sunbed && sunbed.status === 'reserved') {
+                sunbed.status = 'available';
+              }
+            });
+            await beach.save(); // This will trigger pre-save hook
+          }
+        }
+      }
     }
+    
     res.json(booking);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -120,12 +183,28 @@ router.delete('/:id', protect, async (req, res) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
     
-    // Update beach occupancy
-    const beach = await Beach.findById(booking.beach);
-    if (beach && beach.currentBookings > 0) {
-      beach.currentBookings -= 1;
-      beach.occupancyRate = (beach.currentBookings / beach.totalCapacity) * 100;
-      await beach.save();
+    // Free up sunbeds if they were reserved
+    if (booking.sunbeds && booking.sunbeds.length > 0 && booking.zone) {
+      const beach = await Beach.findById(booking.beach);
+      if (beach) {
+        const zone = beach.zones.id(booking.zone);
+        if (zone) {
+          booking.sunbeds.forEach(sunbedId => {
+            const sunbed = zone.sunbeds.id(sunbedId);
+            if (sunbed && sunbed.status === 'reserved') {
+              sunbed.status = 'available';
+            }
+          });
+          await beach.save(); // This will trigger pre-save hook
+        }
+      }
+    } else {
+      // Fallback: Update beach occupancy manually if no sunbeds specified
+      const beach = await Beach.findById(booking.beach);
+      if (beach && beach.currentBookings > 0) {
+        beach.currentBookings -= 1;
+        await beach.save(); // This will trigger pre-save hook
+      }
     }
     
     await booking.deleteOne();
