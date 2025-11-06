@@ -100,6 +100,15 @@ beachSchema.methods.calculateOccupancy = function() {
   }
 };
 
+// Virtual field for capacity (alias for totalCapacity)
+beachSchema.virtual('capacity').get(function() {
+  return this.totalCapacity;
+});
+
+// Ensure virtuals are included in JSON
+beachSchema.set('toJSON', { virtuals: true });
+beachSchema.set('toObject', { virtuals: true });
+
 // Pre-save hook to automatically update occupancy
 beachSchema.pre('save', function(next) {
   this.recomputeCapacity();

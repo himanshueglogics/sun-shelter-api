@@ -19,6 +19,7 @@ class BeachService {
     const query = search ? { name: { $regex: search, $options: 'i' } } : {};
     
     const beaches = await Beach.find(query)
+      .populate('admins', '-password')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -54,11 +55,36 @@ class BeachService {
 
   // Get single beach by ID
   async getBeachById(id) {
-    const beach = await Beach.findById(id);
+    const beach = await Beach.findById(id).populate('admins', '-password');
     if (!beach) {
       throw new Error('Beach not found');
     }
     return beach;
+  }
+
+  // Assign an admin user to a beach
+  async assignAdmin(beachId, userId) {
+    const beach = await Beach.findById(beachId);
+    if (!beach) throw new Error('Beach not found');
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+
+    const exists = (beach.admins || []).some(a => String(a) === String(userId));
+    if (!exists) {
+      beach.admins.push(userId);
+      await beach.save();
+    }
+    // Return populated beach
+    return await Beach.findById(beachId).populate('admins', '-password');
+  }
+
+  // Remove an admin user from a beach
+  async removeAdmin(beachId, userId) {
+    const beach = await Beach.findById(beachId);
+    if (!beach) throw new Error('Beach not found');
+    beach.admins = (beach.admins || []).filter(a => String(a) !== String(userId));
+    await beach.save();
+    return await Beach.findById(beachId).populate('admins', '-password');
   }
 
   // Create new beach
@@ -131,13 +157,23 @@ class BeachService {
       throw new Error('Zone not found');
     }
 
-    const { name, rows, cols } = updateData;
+    const { name, rows, cols, sunbeds } = updateData;
     
     if (name !== undefined) zone.name = name;
     if (rows !== undefined) zone.rows = rows;
     if (cols !== undefined) zone.cols = cols;
     
-    if (rows !== undefined || cols !== undefined) {
+    // If sunbeds are provided, use them directly
+    if (sunbeds && Array.isArray(sunbeds) && sunbeds.length > 0) {
+      zone.sunbeds = sunbeds.map(bed => ({
+        _id: bed._id, // Preserve existing _id if available
+        code: bed.code || `R${bed.row}C${bed.col}`,
+        row: bed.row,
+        col: bed.col,
+        status: bed.status || 'available',
+        priceModifier: bed.priceModifier || 0
+      }));
+    } else if (rows !== undefined || cols !== undefined) {
       // Preserve existing sunbed selections when dimensions change
       const existingBeds = zone.sunbeds || [];
       const newBeds = [];

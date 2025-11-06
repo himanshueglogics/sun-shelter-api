@@ -57,6 +57,16 @@ router.put('/:id/zones/:zoneId', protect, beachController.updateZone.bind(beachC
 // @access  Private
 router.delete('/:id/zones/:zoneId', protect, beachController.deleteZone.bind(beachController));
 
+// @route   POST /api/beaches/:id/admins
+// @desc    Assign an admin to a beach
+// @access  Private
+router.post('/:id/admins', protect, beachController.assignAdmin.bind(beachController));
+
+// @route   DELETE /api/beaches/:id/admins/:userId
+// @desc    Remove an admin from a beach
+// @access  Private
+router.delete('/:id/admins/:userId', protect, beachController.removeAdmin.bind(beachController));
+
 // @route   PUT /api/beaches/:id/zones/:zoneId/sunbeds/:sunbedId
 // @desc    Update a sunbed status
 // @access  Private

@@ -178,6 +178,39 @@ class BeachController {
     }
   }
 
+  // @route   POST /api/beaches/:id/admins
+  // @desc    Assign an admin to a beach
+  // @access  Private
+  async assignAdmin(req, res) {
+    try {
+      const { userId } = req.body;
+      if (!userId) return res.status(400).json({ message: 'userId is required' });
+      const beach = await beachService.assignAdmin(req.params.id, userId);
+      res.json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found' || error.message === 'User not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   DELETE /api/beaches/:id/admins/:userId
+  // @desc    Remove an admin from a beach
+  // @access  Private
+  async removeAdmin(req, res) {
+    try {
+      const { userId } = req.params;
+      const beach = await beachService.removeAdmin(req.params.id, userId);
+      res.json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
   // @route   PUT /api/beaches/:id/zones/:zoneId/sunbeds/:sunbedId
   // @desc    Update a sunbed status
   // @access  Private
