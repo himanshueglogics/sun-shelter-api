@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import User from '../models/User.js';
+import { protect } from '../middleware/auth.js';
+
 const router = express.Router();
-const User = require('../models/User');
-const { protect } = require('../middleware/auth');
 
 // Helper middleware to ensure super admin
 const requireSuper = (req, res, next) => {
@@ -84,4 +85,4 @@ router.delete('/:id', protect, requireSuper, async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

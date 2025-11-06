@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const financeSchema = new mongoose.Schema({
   type: {
@@ -32,4 +32,4 @@ const financeSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('Finance', financeSchema);
+export default mongoose.model('Finance', financeSchema);

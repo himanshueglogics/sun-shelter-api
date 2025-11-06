@@ -1,10 +1,10 @@
-const express = require('express');
+import express from 'express'
 const router = express.Router();
-const Finance = require('../models/Finance');
-const Payout = require('../models/Payout');
-const Beach = require('../models/Beach');
-const Booking = require('../models/Booking');
-const { protect } = require('../middleware/auth');
+import Finance from '../models/Finance.js';
+import Payout from '../models/Payout.js';
+import Beach from '../models/Beach.js';
+import Booking from '../models/Booking.js';
+import { protect } from '../middleware/auth.js';
 
 // @route   GET /api/finance
 // @desc    Get all finance records
@@ -389,4 +389,5 @@ router.post('/seed', protect, async (req, res) => {
   }
 });
 
-module.exports = router;
+
+export default router;

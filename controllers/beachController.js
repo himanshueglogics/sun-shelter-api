@@ -1,0 +1,231 @@
+import beachService from '../services/beachService.js';
+
+class BeachController {
+  // @route   GET /api/beaches/occupancy-overview
+  // @desc    Get occupancy overview for all beaches
+  // @access  Private
+  async getOccupancyOverview(req, res) {
+    try {
+      const overview = await beachService.getOccupancyOverview();
+      res.json(overview);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   GET /api/beaches/stats/summary
+  // @desc    Get beach stats summary
+  // @access  Private
+  async getStatsSummary(req, res) {
+    try {
+      const stats = await beachService.getStatsSummary();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   GET /api/beaches
+  // @desc    Get all beaches (paginated)
+  // @access  Private
+  async getAllBeaches(req, res) {
+    try {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const search = req.query.search || '';
+      
+      const result = await beachService.getAllBeaches(page, limit, search);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   GET /api/beaches/:id
+  // @desc    Get single beach
+  // @access  Private
+  async getBeachById(req, res) {
+    try {
+      const beach = await beachService.getBeachById(req.params.id);
+      res.json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   POST /api/beaches
+  // @desc    Create new beach
+  // @access  Private
+  async createBeach(req, res) {
+    try {
+      const beach = await beachService.createBeach(req.body);
+      res.status(201).json(beach);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   PUT /api/beaches/:id
+  // @desc    Update beach
+  // @access  Private
+  async updateBeach(req, res) {
+    try {
+      const beach = await beachService.updateBeach(req.params.id, req.body);
+      res.json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   DELETE /api/beaches/:id
+  // @desc    Delete beach
+  // @access  Private
+  async deleteBeach(req, res) {
+    try {
+      const result = await beachService.deleteBeach(req.params.id);
+      res.json(result);
+    } catch (error) {
+      if (error.message === 'Beach not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   POST /api/beaches/:id/zones
+  // @desc    Add a zone
+  // @access  Private
+  async addZone(req, res) {
+    try {
+      const beach = await beachService.addZone(req.params.id, req.body);
+      res.status(201).json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   PUT /api/beaches/:id/zones/:zoneId
+  // @desc    Update zone (rows/cols -> regenerate sunbeds)
+  // @access  Private
+  async updateZone(req, res) {
+    try {
+      const { beach, zone } = await beachService.updateZone(
+        req.params.id,
+        req.params.zoneId,
+        req.body
+      );
+      
+      // Emit real-time updates
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          io.to(`beach:${beach._id}`).emit('zone:update', {
+            beachId: String(beach._id),
+            zone: {
+              _id: String(zone._id),
+              name: zone.name,
+              rows: zone.rows,
+              cols: zone.cols,
+              sunbeds: zone.sunbeds.map(b => ({ 
+                _id: String(b._id), 
+                code: b.code, 
+                row: b.row, 
+                col: b.col, 
+                status: b.status 
+              }))
+            }
+          });
+          io.to(`beach:${beach._id}`).emit('beach:occupancy', {
+            beachId: String(beach._id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.capacity,
+            status: beach.status
+          });
+        }
+      } catch (_) {}
+      
+      res.json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found' || error.message === 'Zone not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   DELETE /api/beaches/:id/zones/:zoneId
+  // @desc    Remove zone
+  // @access  Private
+  async deleteZone(req, res) {
+    try {
+      const beach = await beachService.deleteZone(req.params.id, req.params.zoneId);
+      res.json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found' || error.message === 'Zone not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   PUT /api/beaches/:id/zones/:zoneId/sunbeds/:sunbedId
+  // @desc    Update a sunbed status
+  // @access  Private
+  async updateSunbedStatus(req, res) {
+    try {
+      const actorId = req.headers['x-socket-id'] || null;
+      const { beach, zone, bed } = await beachService.updateSunbedStatus(
+        req.params.id,
+        req.params.zoneId,
+        req.params.sunbedId,
+        req.body.status
+      );
+      
+      // Emit real-time updates
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          io.to(`beach:${beach._id}`).emit('sunbed:update', {
+            beachId: String(beach._id),
+            zoneId: String(zone._id),
+            sunbed: { 
+              _id: String(bed._id), 
+              code: bed.code, 
+              row: bed.row, 
+              col: bed.col, 
+              status: bed.status 
+            },
+            actorId
+          });
+          io.to(`beach:${beach._id}`).emit('beach:occupancy', {
+            beachId: String(beach._id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.capacity,
+            status: beach.status,
+            actorId
+          });
+        }
+      } catch (_) {}
+      
+      res.json(beach);
+    } catch (error) {
+      if (error.message === 'Beach not found' || error.message === 'Zone not found' || error.message === 'Sunbed not found') {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+}
+
+export default new BeachController();

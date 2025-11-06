@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import Alert from '../models/Alert.js';
+import { protect } from '../middleware/auth.js';
+
 const router = express.Router();
-const Alert = require('../models/Alert');
-const { protect } = require('../middleware/auth');
 
 // @route   GET /api/alerts
 // @desc    Get all alerts
@@ -64,4 +65,4 @@ router.delete('/:id', protect, async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

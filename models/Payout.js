@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const payoutSchema = new mongoose.Schema({
   beach: {
@@ -35,4 +35,4 @@ const payoutSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('Payout', payoutSchema);
+export default mongoose.model('Payout', payoutSchema);

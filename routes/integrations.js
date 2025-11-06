@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import Integration from '../models/Integration.js';
+import { protect } from '../middleware/auth.js';
+
 const router = express.Router();
-const Integration = require('../models/Integration');
-const { protect } = require('../middleware/auth');
 
 // @route   GET /api/integrations
 // @desc    List integrations
@@ -143,4 +144,4 @@ router.post('/logs/clear', protect, async (_req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

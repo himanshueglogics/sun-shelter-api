@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const integrationSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true }, // e.g., Stripe, PayPal, MapBox
@@ -9,4 +9,4 @@ const integrationSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-module.exports = mongoose.model('Integration', integrationSchema);
+export default mongoose.model('Integration', integrationSchema);

@@ -1,8 +1,10 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const sunbedSchema = new mongoose.Schema({
   code: { type: String, required: true },
-  status: { type: String, enum: ['available', 'reserved', 'unavailable'], default: 'available' },
+  row: { type: Number, required: true },
+  col: { type: Number, required: true },
+  status: { type: String, enum: ['available', 'selected', 'reserved', 'unavailable'], default: 'available' },
   priceModifier: { type: Number, default: 0 }
 }, { _id: true });
 
@@ -105,4 +107,4 @@ beachSchema.pre('save', function(next) {
   next();
 });
 
-module.exports = mongoose.model('Beach', beachSchema);
+export default mongoose.model('Beach', beachSchema);
