@@ -33,7 +33,7 @@ class BeachController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || '';
-      
+
       const result = await beachService.getAllBeaches(page, limit, search);
       res.json(result);
     } catch (error) {
@@ -123,7 +123,7 @@ class BeachController {
         req.params.zoneId,
         req.body
       );
-      
+
       // Emit real-time updates
       try {
         const io = req.app.get('io');
@@ -135,12 +135,12 @@ class BeachController {
               name: zone.name,
               rows: zone.rows,
               cols: zone.cols,
-              sunbeds: zone.sunbeds.map(b => ({ 
-                _id: String(b._id), 
-                code: b.code, 
-                row: b.row, 
-                col: b.col, 
-                status: b.status 
+              sunbeds: zone.sunbeds.map(b => ({
+                _id: String(b._id),
+                code: b.code,
+                row: b.row,
+                col: b.col,
+                status: b.status
               }))
             }
           });
@@ -152,8 +152,8 @@ class BeachController {
             status: beach.status
           });
         }
-      } catch (_) {}
-      
+      } catch (_) { }
+
       res.json(beach);
     } catch (error) {
       if (error.message === 'Beach not found' || error.message === 'Zone not found') {
@@ -183,13 +183,22 @@ class BeachController {
   // @access  Private
   async assignAdmin(req, res) {
     try {
-      const { userId } = req.body;
+      const { userId, userIds } = req.body;
+
+      if (Array.isArray(userIds) && userIds.length > 0) {
+        const result = await beachService.assignAdmins(req.params.id, userIds);
+        return res.json(result);
+      }
+
       if (!userId) return res.status(400).json({ message: 'userId is required' });
       const beach = await beachService.assignAdmin(req.params.id, userId);
       res.json(beach);
     } catch (error) {
       if (error.message === 'Beach not found' || error.message === 'User not found') {
         return res.status(404).json({ message: error.message });
+      }
+      if (error.message === 'Admin already assigned to this beach' || error.message === 'Admin already assigned to another beach') {
+        return res.status(400).json({ message: error.message });
       }
       res.status(500).json({ message: error.message });
     }
@@ -223,7 +232,7 @@ class BeachController {
         req.params.sunbedId,
         req.body.status
       );
-      
+
       // Emit real-time updates
       try {
         const io = req.app.get('io');
@@ -231,12 +240,12 @@ class BeachController {
           io.to(`beach:${beach._id}`).emit('sunbed:update', {
             beachId: String(beach._id),
             zoneId: String(zone._id),
-            sunbed: { 
-              _id: String(bed._id), 
-              code: bed.code, 
-              row: bed.row, 
-              col: bed.col, 
-              status: bed.status 
+            sunbed: {
+              _id: String(bed._id),
+              code: bed.code,
+              row: bed.row,
+              col: bed.col,
+              status: bed.status
             },
             actorId
           });
@@ -249,8 +258,8 @@ class BeachController {
             actorId
           });
         }
-      } catch (_) {}
-      
+      } catch (_) { }
+
       res.json(beach);
     } catch (error) {
       if (error.message === 'Beach not found' || error.message === 'Zone not found' || error.message === 'Sunbed not found') {

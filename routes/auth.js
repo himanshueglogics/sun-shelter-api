@@ -24,9 +24,15 @@ router.get('/me', protect, authController.getCurrentUser.bind(authController));
 // @access  Public
 router.post('/forgot-password', authController.forgotPassword.bind(authController));
 
+// @route   GET /api/auth/validate-reset/:resetToken
+// @desc    Validate reset token
+// @access  Public
+router.get('/validate-reset/:resetToken', authController.validateResetToken.bind(authController));
+
 // @route   PUT /api/auth/reset-password/:resetToken
-// @desc    Reset password
+// @desc    Reset password (also support POST for client compatibility)
 // @access  Public
 router.put('/reset-password/:resetToken', authController.resetPassword.bind(authController));
+router.post('/reset-password/:resetToken', authController.resetPassword.bind(authController));
 
 export default router;

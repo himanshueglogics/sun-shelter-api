@@ -17,15 +17,15 @@ class BeachService {
   async getAllBeaches(page = 1, limit = 10, search = '') {
     const skip = (page - 1) * limit;
     const query = search ? { name: { $regex: search, $options: 'i' } } : {};
-    
+
     const beaches = await Beach.find(query)
       .populate('admins', '-password')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
-    
+
     const total = await Beach.countDocuments(query);
-    
+
     return {
       beaches,
       currentPage: page,
@@ -62,20 +62,61 @@ class BeachService {
     return beach;
   }
 
-  // Assign an admin user to a beach
   async assignAdmin(beachId, userId) {
     const beach = await Beach.findById(beachId);
     if (!beach) throw new Error('Beach not found');
     const user = await User.findById(userId);
     if (!user) throw new Error('User not found');
 
-    const exists = (beach.admins || []).some(a => String(a) === String(userId));
-    if (!exists) {
-      beach.admins.push(userId);
+    const existsHere = (beach.admins || []).some(a => String(a) === String(userId));
+    if (existsHere) {
+      throw new Error('Admin already assigned to this beach');
+    }
+
+    const otherBeach = await Beach.findOne({ _id: { $ne: beachId }, admins: userId });
+    if (otherBeach) {
+      throw new Error('Admin already assigned to another beach');
+    }
+
+    beach.admins.push(userId);
+    await beach.save();
+    return await Beach.findById(beachId).populate('admins', '-password');
+  }
+
+  async assignAdmins(beachId, userIds = []) {
+    const beach = await Beach.findById(beachId);
+    if (!beach) throw new Error('Beach not found');
+
+    const uniqueIds = [...new Set(userIds.map(String))];
+    const assigned = [];
+    const skipped = [];
+
+    for (const uid of uniqueIds) {
+      const user = await User.findById(uid);
+      if (!user) {
+        skipped.push({ userId: uid, reason: 'User not found' });
+        continue;
+      }
+      const existsHere = (beach.admins || []).some(a => String(a) === String(uid));
+      if (existsHere) {
+        skipped.push({ userId: uid, reason: 'Admin already assigned to this beach' });
+        continue;
+      }
+      const otherBeach = await Beach.findOne({ _id: { $ne: beachId }, admins: uid });
+      if (otherBeach) {
+        skipped.push({ userId: uid, reason: 'Admin already assigned to another beach' });
+        continue;
+      }
+      beach.admins.push(uid);
+      assigned.push(uid);
+    }
+
+    if (assigned.length > 0) {
       await beach.save();
     }
-    // Return populated beach
-    return await Beach.findById(beachId).populate('admins', '-password');
+
+    const populated = await Beach.findById(beachId).populate('admins', '-password');
+    return { beach: populated, assigned, skipped };
   }
 
   // Remove an admin user from a beach
@@ -100,7 +141,7 @@ class BeachService {
     if (!beach) {
       throw new Error('Beach not found');
     }
-    
+
     Object.assign(beach, data);
     await beach.save();
     return beach;
@@ -112,7 +153,7 @@ class BeachService {
     if (!beach) {
       throw new Error('Beach not found');
     }
-    
+
     await beach.deleteOne();
     return { message: 'Beach deleted successfully' };
   }
@@ -125,23 +166,23 @@ class BeachService {
     }
 
     const { name, rows, cols, sunbeds } = zoneData;
-    
+
     // Use provided sunbeds if available, otherwise generate default ones
-    const zoneSunbeds = sunbeds && sunbeds.length > 0 
+    const zoneSunbeds = sunbeds && sunbeds.length > 0
       ? sunbeds.map(bed => ({
-          code: bed.code || `R${bed.row}C${bed.col}`,
-          row: bed.row,
-          col: bed.col,
-          status: bed.status || 'available',
-          priceModifier: bed.priceModifier || 0
-        }))
+        code: bed.code || `R${bed.row}C${bed.col}`,
+        row: bed.row,
+        col: bed.col,
+        status: bed.status || 'available',
+        priceModifier: bed.priceModifier || 0
+      }))
       : this.buildSunbeds(rows, cols);
-    
+
     const zone = { name, rows, cols, sunbeds: zoneSunbeds };
     beach.zones.push(zone);
     beach.recomputeCapacity();
     await beach.save();
-    
+
     return beach;
   }
 
@@ -151,18 +192,18 @@ class BeachService {
     if (!beach) {
       throw new Error('Beach not found');
     }
-    
+
     const zone = beach.zones.id(zoneId);
     if (!zone) {
       throw new Error('Zone not found');
     }
 
     const { name, rows, cols, sunbeds } = updateData;
-    
+
     if (name !== undefined) zone.name = name;
     if (rows !== undefined) zone.rows = rows;
     if (cols !== undefined) zone.cols = cols;
-    
+
     // If sunbeds are provided, use them directly
     if (sunbeds && Array.isArray(sunbeds) && sunbeds.length > 0) {
       zone.sunbeds = sunbeds.map(bed => ({
@@ -191,10 +232,10 @@ class BeachService {
       }
       zone.sunbeds = newBeds;
     }
-    
+
     beach.recomputeCapacity();
     await beach.save();
-    
+
     return { beach, zone };
   }
 
@@ -204,16 +245,16 @@ class BeachService {
     if (!beach) {
       throw new Error('Beach not found');
     }
-    
+
     const zone = beach.zones.id(zoneId);
     if (!zone) {
       throw new Error('Zone not found');
     }
-    
+
     zone.remove();
     beach.recomputeCapacity();
     await beach.save();
-    
+
     return beach;
   }
 
@@ -223,20 +264,20 @@ class BeachService {
     if (!beach) {
       throw new Error('Beach not found');
     }
-    
+
     const zone = beach.zones.id(zoneId);
     if (!zone) {
       throw new Error('Zone not found');
     }
-    
+
     const bed = zone.sunbeds.id(sunbedId);
     if (!bed) {
       throw new Error('Sunbed not found');
     }
-    
+
     if (status) bed.status = status;
     await beach.save();
-    
+
     return { beach, zone, bed };
   }
 }

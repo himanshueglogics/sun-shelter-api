@@ -66,7 +66,8 @@ class AuthController {
         return res.status(400).json({ message: 'Please provide an email' });
       }
 
-      const result = await authService.forgotPassword(email);
+      const origin = req.get('origin');
+      const result = await authService.forgotPassword(email, origin);
       res.json(result);
     } catch (error) {
       if (error.message === 'User not found') {
@@ -94,6 +95,21 @@ class AuthController {
       }
 
       const result = await authService.resetPassword(req.params.resetToken, password);
+      res.json(result);
+    } catch (error) {
+      if (error.message === 'Invalid or expired token') {
+        return res.status(400).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+
+  // @route   GET /api/auth/validate-reset/:resetToken
+  // @desc    Validate reset token
+  // @access  Public
+  async validateResetToken(req, res) {
+    try {
+      const result = await authService.validateResetToken(req.params.resetToken);
       res.json(result);
     } catch (error) {
       if (error.message === 'Invalid or expired token') {
