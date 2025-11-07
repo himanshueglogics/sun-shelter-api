@@ -33,6 +33,9 @@ class AuthController {
       if (error.message === 'Invalid credentials') {
         return res.status(401).json({ message: error.message });
       }
+      if (error.message === 'Not authorized') {
+        return res.status(403).json({ message: error.message });
+      }
       res.status(500).json({ message: error.message });
     }
   }
@@ -72,6 +75,9 @@ class AuthController {
       if (error.message === 'Email could not be sent') {
         return res.status(500).json({ message: error.message });
       }
+      if (error.message === 'Not authorized') {
+        return res.status(403).json({ message: error.message });
+      }
       res.status(500).json({ message: error.message });
     }
   }
@@ -99,3 +105,4 @@ class AuthController {
 }
 
 export default new AuthController();
+

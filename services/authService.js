@@ -56,6 +56,11 @@ class AuthService {
       throw new Error('Invalid credentials');
     }
 
+    // Restrict login to super_admin only
+    if (user.role !== 'super_admin') {
+      throw new Error('Not authorized');
+    }
+
     const token = this.generateToken(user._id);
 
     return {
@@ -85,6 +90,11 @@ class AuthService {
       throw new Error('User not found');
     }
 
+    // Restrict forgot-password to super_admin only
+    if (user.role !== 'super_admin') {
+      throw new Error('Not authorized');
+    }
+
     // Generate reset token
     const resetToken = crypto.randomBytes(20).toString('hex');
     
@@ -106,9 +116,9 @@ class AuthService {
 
     try {
       await sendEmail({
-        email: user.email,
+        to: user.email,
         subject: 'Password reset token',
-        message
+        html: message
       });
 
       return { message: 'Email sent' };
@@ -158,3 +168,4 @@ class AuthService {
 }
 
 export default new AuthService();
+
