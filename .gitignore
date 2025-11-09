@@ -2,3 +2,6 @@
 /node_modules
 /seed.js
 /scripts/seedFinanceData.js
+/generated/prisma
+
+/generated/prisma

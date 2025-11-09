@@ -1,0 +1,283 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Enums
+enum Role {
+  admin
+  super_admin
+  user
+}
+
+enum BeachStatus {
+  active
+  inactive
+  maintenance
+}
+
+enum SunbedStatus {
+  available
+  selected
+  reserved
+  unavailable
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+  completed
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  refunded
+}
+
+enum FinanceType {
+  rental_income
+  service_fee
+  expense
+}
+
+enum PayoutStatus {
+  pending
+  approved
+  rejected
+  completed
+}
+
+enum AlertType {
+  info
+  warning
+  success
+  error
+}
+
+// Models
+model User {
+  id                  Int       @id @default(autoincrement())
+  email               String    @unique
+  password            String
+  role                Role      @default(admin)
+  name                String    @default("Admin User")
+  resetPasswordToken  String?
+  resetPasswordExpire DateTime?
+  createdAt           DateTime  @default(now())
+
+  // Relations
+  beachAdmins      BeachAdmin[]
+  payoutsProcessed Payout[]     @relation("PayoutProcessedBy")
+
+  // Migration helper
+  mongoId String? @unique
+}
+
+model Beach {
+  id              Int         @id @default(autoincrement())
+  name            String
+  location        String
+  occupancyRate   Int         @default(0)
+  totalCapacity   Int         @default(100)
+  currentBookings Int         @default(0)
+  status          BeachStatus @default(active)
+  amenities       Json?
+  services        Json?
+  pricePerDay     Float
+  images          Json?
+  createdAt       DateTime    @default(now())
+
+  // Relations
+  zones       Zone[]
+  alerts      Alert[]
+  bookings    Booking[]
+  finances    Finance[]
+  payouts     Payout[]
+  beachAdmins BeachAdmin[]
+  sunbeds     Sunbed[]
+
+  // Migration helper
+  mongoId String? @unique
+}
+
+model Zone {
+  id   Int    @id @default(autoincrement())
+  name String
+  rows Int    @default(0)
+  cols Int    @default(0)
+
+  // FKs
+  beachId Int
+  beach   Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
+
+  // Relations
+  sunbeds  Sunbed[]
+  bookings Booking[]
+
+  // Migration helper
+  mongoId String? @unique
+
+  @@index([beachId])
+}
+
+model Sunbed {
+  id            Int          @id @default(autoincrement())
+  code          String
+  row           Int
+  col           Int
+  status        SunbedStatus @default(available)
+  priceModifier Float        @default(0)
+
+  // FKs
+  beachId Int
+  zoneId  Int
+  beach   Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  zone    Zone  @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  // Relations
+  bookings BookingSunbed[]
+
+  // Migration helper
+  mongoId String? @unique
+
+  @@unique([beachId, code])
+  @@index([beachId])
+  @@index([zoneId])
+}
+
+model Booking {
+  id             Int           @id @default(autoincrement())
+  customerName   String
+  customerEmail  String
+  customerPhone  String
+  checkInDate    DateTime
+  checkOutDate   DateTime
+  numberOfGuests Int
+  totalAmount    Float
+  status         BookingStatus @default(pending)
+  paymentStatus  PaymentStatus @default(pending)
+  createdAt      DateTime      @default(now())
+
+  // FKs
+  beachId Int
+  zoneId  Int?
+  beach   Beach @relation(fields: [beachId], references: [id])
+  zone    Zone? @relation(fields: [zoneId], references: [id])
+
+  // Relations
+  sunbeds  BookingSunbed[]
+  finances Finance[]
+
+  // Migration helper
+  mongoId String? @unique
+
+  @@index([beachId])
+  @@index([zoneId])
+}
+
+model BookingSunbed {
+  bookingId Int
+  sunbedId  Int
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  sunbed  Sunbed  @relation(fields: [sunbedId], references: [id], onDelete: Cascade)
+
+  @@id([bookingId, sunbedId])
+  @@index([sunbedId])
+}
+
+model Finance {
+  id          Int         @id @default(autoincrement())
+  type        FinanceType
+  amount      Float
+  description String
+  date        DateTime    @default(now())
+  createdAt   DateTime    @default(now())
+
+  // Optional FKs
+  bookingId Int?
+  beachId   Int?
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+  beach     Beach?   @relation(fields: [beachId], references: [id])
+
+  // Migration helper
+  mongoId String? @unique
+
+  @@index([bookingId])
+  @@index([beachId])
+}
+
+model Payout {
+  id            Int          @id @default(autoincrement())
+  amount        Float
+  status        PayoutStatus @default(pending)
+  requestedDate DateTime     @default(now())
+  processedDate DateTime?
+  notes         String?
+  createdAt     DateTime     @default(now())
+
+  // FKs
+  beachId       Int
+  processedById Int?
+  beach         Beach @relation(fields: [beachId], references: [id])
+  processedBy   User? @relation("PayoutProcessedBy", fields: [processedById], references: [id])
+
+  // Migration helper
+  mongoId String? @unique
+
+  @@index([beachId])
+  @@index([processedById])
+}
+
+model Alert {
+  id        Int       @id @default(autoincrement())
+  type      AlertType
+  message   String
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  // Optional FK
+  beachId Int?
+  beach   Beach? @relation(fields: [beachId], references: [id])
+
+  // Migration helper
+  mongoId String? @unique
+
+  @@index([beachId])
+}
+
+model Integration {
+  id        Int      @id @default(autoincrement())
+  name      String
+  type      String
+  provider  String?
+  enabled   Boolean  @default(false)
+  settings  Json?
+  createdAt DateTime @default(now())
+
+  // Migration helper
+  mongoId String? @unique
+}
+
+model BeachAdmin {
+  beachId Int
+  userId  Int
+
+  beach Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([beachId, userId])
+  @@index([userId])
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
