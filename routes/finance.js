@@ -1,9 +1,6 @@
 import express from 'express'
 const router = express.Router();
-import Finance from '../models/Finance.js';
-import Payout from '../models/Payout.js';
-import Beach from '../models/Beach.js';
-import Booking from '../models/Booking.js';
+import prisma from '../utils/prisma.js';
 import { protect } from '../middleware/auth.js';
 
 // @route   GET /api/finance
@@ -12,34 +9,34 @@ import { protect } from '../middleware/auth.js';
 router.get('/', protect, async (req, res) => {
   try {
     const { beach, month, year } = req.query;
-    const filter = {};
-    
+    const where = {};
+
+    if (year) {
+      const startDate = new Date(`${year}-01-01`);
+      const endDate = new Date(`${year}-12-31`);
+      where.date = { gte: startDate, lte: endDate };
+    }
+    if (month && year) {
+      const startDate = new Date(`${year}-${String(month).padStart(2, '0')}-01`);
+      const endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + 1);
+      where.date = { gte: startDate, lt: endDate };
+    }
+
     if (beach) {
-      const beaches = await Beach.find({ name: { $regex: beach, $options: 'i' } });
-      filter.beach = { $in: beaches.map(b => b._id) };
+      const beaches = await prisma.beach.findMany({ where: { name: { contains: beach, mode: 'insensitive' } }, select: { id: true } });
+      if (beaches.length) where.beachId = { in: beaches.map(b => b.id) };
+      else where.beachId = -1; // force empty
     }
-    
-    if (month || year) {
-      filter.date = {};
-      if (year) {
-        const startDate = new Date(`${year}-01-01`);
-        const endDate = new Date(`${year}-12-31`);
-        filter.date.$gte = startDate;
-        filter.date.$lte = endDate;
-      }
-      if (month && year) {
-        const startDate = new Date(`${year}-${month.padStart(2, '0')}-01`);
-        const endDate = new Date(startDate);
-        endDate.setMonth(endDate.getMonth() + 1);
-        filter.date.$gte = startDate;
-        filter.date.$lt = endDate;
-      }
-    }
-    
-    const finances = await Finance.find(filter)
-      .populate('beach', 'name')
-      .populate('booking')
-      .sort({ date: -1 });
+
+    const finances = await prisma.finance.findMany({
+      where,
+      include: {
+        beach: { select: { id: true, name: true } },
+        booking: true
+      },
+      orderBy: { date: 'desc' }
+    });
     res.json(finances);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -51,7 +48,18 @@ router.get('/', protect, async (req, res) => {
 // @access  Private
 router.post('/', protect, async (req, res) => {
   try {
-    const finance = await Finance.create(req.body);
+    const { type, amount, description, bookingId, beachId, date } = req.body;
+    const finance = await prisma.finance.create({
+      data: {
+        type,
+        amount: Number(amount),
+        description,
+        bookingId: bookingId ? Number(bookingId) : null,
+        beachId: beachId ? Number(beachId) : null,
+        date: date ? new Date(date) : new Date(),
+        createdAt: new Date()
+      }
+    });
     res.status(201).json(finance);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -63,14 +71,11 @@ router.post('/', protect, async (req, res) => {
 // @access  Private
 router.get('/summary', protect, async (req, res) => {
   try {
-    const summary = await Finance.aggregate([
-      {
-        $group: {
-          _id: '$type',
-          total: { $sum: '$amount' }
-        }
-      }
-    ]);
+    const grouped = await prisma.finance.groupBy({
+      by: ['type'],
+      _sum: { amount: true }
+    });
+    const summary = grouped.map(g => ({ _id: g.type, total: g._sum.amount || 0 }));
     res.json(summary);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -82,21 +87,14 @@ router.get('/summary', protect, async (req, res) => {
 // @access  Private
 router.get('/overview', protect, async (req, res) => {
   try {
-    const [revenue, expenses, pendingPayouts] = await Promise.all([
-      Finance.aggregate([
-        { $match: { type: { $in: ['rental_income', 'service_fee'] } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]),
-      Finance.aggregate([
-        { $match: { type: 'expense' } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]),
-      Payout.countDocuments({ status: 'pending' })
+    const [rev, exp, pendingPayouts] = await Promise.all([
+      prisma.finance.aggregate({ _sum: { amount: true }, where: { type: { in: ['rental_income', 'service_fee'] } } }),
+      prisma.finance.aggregate({ _sum: { amount: true }, where: { type: 'expense' } }),
+      prisma.payout.count({ where: { status: 'pending' } })
     ]);
-    
     res.json({
-      totalRevenue: revenue[0]?.total || 0,
-      totalExpenses: expenses[0]?.total || 0,
+      totalRevenue: rev._sum.amount || 0,
+      totalExpenses: exp._sum.amount || 0,
       pendingPayouts
     });
   } catch (error) {
@@ -109,15 +107,18 @@ router.get('/overview', protect, async (req, res) => {
 // @access  Private
 router.get('/beach-revenue', protect, async (req, res) => {
   try {
-    const revenueByBeach = await Finance.aggregate([
-      { $match: { type: { $in: ['rental_income', 'service_fee'] } } },
-      { $group: { _id: '$beach', total: { $sum: '$amount' } } },
-      { $lookup: { from: 'beaches', localField: '_id', foreignField: '_id', as: 'beachInfo' } },
-      { $unwind: '$beachInfo' },
-      { $project: { name: '$beachInfo.name', value: '$total' } }
-    ]);
-    
-    res.json(revenueByBeach);
+    const grouped = await prisma.finance.groupBy({
+      by: ['beachId'],
+      where: { type: { in: ['rental_income', 'service_fee'] } },
+      _sum: { amount: true }
+    });
+    const beachIds = grouped.map(g => g.beachId).filter(Boolean);
+    const beaches = await prisma.beach.findMany({ where: { id: { in: beachIds } }, select: { id: true, name: true } });
+    const nameMap = new Map(beaches.map(b => [b.id, b.name]));
+    const result = grouped
+      .filter(g => g.beachId != null)
+      .map(g => ({ name: nameMap.get(g.beachId) || 'Unknown', value: g._sum.amount || 0 }));
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -128,23 +129,21 @@ router.get('/beach-revenue', protect, async (req, res) => {
 // @access  Private
 router.get('/service-fees', protect, async (req, res) => {
   try {
-    const beaches = await Beach.find().select('name');
+    const beaches = await prisma.beach.findMany({ select: { id: true, name: true } });
     const serviceFees = await Promise.all(beaches.map(async (beach) => {
-      const bookings = await Booking.countDocuments({ beach: beach._id, status: { $ne: 'cancelled' } });
-      const revenue = await Finance.aggregate([
-        { $match: { beach: beach._id, type: { $in: ['rental_income', 'service_fee'] } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
+      const [bookings, revenueAgg] = await Promise.all([
+        prisma.booking.count({ where: { beachId: beach.id, status: { not: 'cancelled' } } }),
+        prisma.finance.aggregate({ _sum: { amount: true }, where: { beachId: beach.id, type: { in: ['rental_income', 'service_fee'] } } })
       ]);
-      
+      const totalRev = revenueAgg._sum.amount || 0;
       return {
         beach: beach.name,
         bookings,
         vip: Math.floor(bookings * 0.4),
         guests: Math.floor(bookings * 3.5),
-        revenue: `$${(revenue[0]?.total || 0).toLocaleString()}`
+        revenue: `$${totalRev.toLocaleString()}`
       };
     }));
-    
     res.json(serviceFees);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -156,22 +155,14 @@ router.get('/service-fees', protect, async (req, res) => {
 // @access  Private
 router.get('/detailed-report', protect, async (req, res) => {
   try {
-    const beaches = await Beach.find().select('name');
+    const beaches = await prisma.beach.findMany({ select: { id: true, name: true } });
     const report = await Promise.all(beaches.map(async (beach) => {
       const [bookingRev, serviceFees] = await Promise.all([
-        Finance.aggregate([
-          { $match: { beach: beach._id, type: 'rental_income' } },
-          { $group: { _id: null, total: { $sum: '$amount' } } }
-        ]),
-        Finance.aggregate([
-          { $match: { beach: beach._id, type: 'service_fee' } },
-          { $group: { _id: null, total: { $sum: '$amount' } } }
-        ])
+        prisma.finance.aggregate({ _sum: { amount: true }, where: { beachId: beach.id, type: 'rental_income' } }),
+        prisma.finance.aggregate({ _sum: { amount: true }, where: { beachId: beach.id, type: 'service_fee' } })
       ]);
-      
-      const bookingRevenue = bookingRev[0]?.total || 0;
-      const serviceFee = serviceFees[0]?.total || 0;
-      
+      const bookingRevenue = bookingRev._sum.amount || 0;
+      const serviceFee = serviceFees._sum.amount || 0;
       return {
         beach: beach.name,
         bookingRevenue: `$${bookingRevenue.toLocaleString()}`,
@@ -179,7 +170,6 @@ router.get('/detailed-report', protect, async (req, res) => {
         totalRevenue: `$${(bookingRevenue + serviceFee).toLocaleString()}`
       };
     }));
-    
     res.json(report);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -191,32 +181,20 @@ router.get('/detailed-report', protect, async (req, res) => {
 // @access  Private
 router.get('/insights', protect, async (req, res) => {
   try {
-    const year = req.query.year || new Date().getFullYear();
-    const insights = await Finance.aggregate([
-      {
-        $match: {
-          type: { $in: ['rental_income', 'service_fee'] },
-          date: {
-            $gte: new Date(`${year}-01-01`),
-            $lte: new Date(`${year}-12-31`)
-          }
-        }
-      },
-      {
-        $group: {
-          _id: { $month: '$date' },
-          revenue: { $sum: '$amount' }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-    
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const result = months.map((month, idx) => {
-      const data = insights.find(i => i._id === idx + 1);
-      return { month, revenue: data?.revenue || 0 };
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const start = new Date(`${year}-01-01`);
+    const end = new Date(`${year}-12-31`);
+    const rows = await prisma.finance.findMany({
+      where: { type: { in: ['rental_income', 'service_fee'] }, date: { gte: start, lte: end } },
+      select: { amount: true, date: true }
     });
-    
+    const buckets = Array.from({ length: 12 }, () => 0);
+    for (const r of rows) {
+      const m = (new Date(r.date)).getMonth();
+      buckets[m] += Number(r.amount || 0);
+    }
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const result = months.map((month, i) => ({ month, revenue: buckets[i] }));
     res.json(result);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -230,10 +208,10 @@ router.get('/insights', protect, async (req, res) => {
 // @access  Private
 router.get('/payouts', protect, async (req, res) => {
   try {
-    const payouts = await Payout.find()
-      .populate('beach', 'name')
-      .populate('processedBy', 'name email')
-      .sort({ requestedDate: -1 });
+    const payouts = await prisma.payout.findMany({
+      include: { beach: { select: { id: true, name: true } }, processedBy: { select: { id: true, name: true, email: true } } },
+      orderBy: { requestedDate: 'desc' }
+    });
     res.json(payouts);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -245,7 +223,17 @@ router.get('/payouts', protect, async (req, res) => {
 // @access  Private
 router.post('/payouts', protect, async (req, res) => {
   try {
-    const payout = await Payout.create(req.body);
+    const { amount, beachId, notes } = req.body;
+    const payout = await prisma.payout.create({
+      data: {
+        amount: Number(amount),
+        beachId: Number(beachId),
+        status: 'pending',
+        notes: notes || null,
+        requestedDate: new Date(),
+        createdAt: new Date()
+      }
+    });
     res.status(201).json(payout);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -257,22 +245,14 @@ router.post('/payouts', protect, async (req, res) => {
 // @access  Private
 router.post('/payouts/:id/approve', protect, async (req, res) => {
   try {
-    const payout = await Payout.findByIdAndUpdate(
-      req.params.id,
-      {
-        status: 'approved',
-        processedDate: new Date(),
-        processedBy: req.user._id
-      },
-      { new: true }
-    ).populate('beach', 'name');
-    
-    if (!payout) {
-      return res.status(404).json({ message: 'Payout not found' });
-    }
-    
+    const id = Number(req.params.id);
+    const payout = await prisma.payout.update({
+      where: { id },
+      data: { status: 'approved', processedDate: new Date(), processedById: Number(req.user.id) }
+    });
     res.json(payout);
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ message: 'Payout not found' });
     res.status(500).json({ message: error.message });
   }
 });
@@ -282,23 +262,14 @@ router.post('/payouts/:id/approve', protect, async (req, res) => {
 // @access  Private
 router.post('/payouts/:id/reject', protect, async (req, res) => {
   try {
-    const payout = await Payout.findByIdAndUpdate(
-      req.params.id,
-      {
-        status: 'rejected',
-        processedDate: new Date(),
-        processedBy: req.user._id,
-        notes: req.body.notes
-      },
-      { new: true }
-    ).populate('beach', 'name');
-    
-    if (!payout) {
-      return res.status(404).json({ message: 'Payout not found' });
-    }
-    
+    const id = Number(req.params.id);
+    const payout = await prisma.payout.update({
+      where: { id },
+      data: { status: 'rejected', processedDate: new Date(), processedById: Number(req.user.id), notes: req.body.notes || null }
+    });
     res.json(payout);
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ message: 'Payout not found' });
     res.status(500).json({ message: error.message });
   }
 });
@@ -308,82 +279,46 @@ router.post('/payouts/:id/reject', protect, async (req, res) => {
 // @access  Private
 router.post('/seed', protect, async (req, res) => {
   try {
-    const beaches = await Beach.find();
-    
-    if (beaches.length === 0) {
-      return res.status(400).json({ message: 'No beaches found. Please create beaches first.' });
-    }
+    const beaches = await prisma.beach.findMany({ select: { id: true, name: true } });
+    if (!beaches.length) return res.status(400).json({ message: 'No beaches found. Please create beaches first.' });
 
-    // Clear existing finance and payout data
-    await Finance.deleteMany({});
-    await Payout.deleteMany({});
+    await prisma.finance.deleteMany({});
+    await prisma.payout.deleteMany({});
 
-    // Generate finance records for the past 12 months
     const financeRecords = [];
-    const currentDate = new Date();
-    
-    for (let month = 0; month < 12; month++) {
-      const date = new Date(currentDate);
-      date.setMonth(date.getMonth() - month);
-      
-      beaches.forEach((beach) => {
-        // Generate 15-30 bookings per beach per month
+    const now = new Date();
+    for (let m = 0; m < 12; m++) {
+      const base = new Date(now);
+      base.setMonth(base.getMonth() - m);
+      for (const beach of beaches) {
         const bookingsCount = Math.floor(Math.random() * 16) + 15;
-        
         for (let i = 0; i < bookingsCount; i++) {
           const bookingAmount = Math.floor(Math.random() * 300) + 100;
           const rentalIncome = bookingAmount * 0.93;
           const serviceFee = bookingAmount * 0.07;
-          
-          financeRecords.push({
-            type: 'rental_income',
-            amount: rentalIncome,
-            description: `Rental income - ${beach.name}`,
-            beach: beach._id,
-            date: new Date(date.getFullYear(), date.getMonth(), Math.floor(Math.random() * 28) + 1)
-          });
-          
-          financeRecords.push({
-            type: 'service_fee',
-            amount: serviceFee,
-            description: `Service fee - ${beach.name}`,
-            beach: beach._id,
-            date: new Date(date.getFullYear(), date.getMonth(), Math.floor(Math.random() * 28) + 1)
-          });
+          financeRecords.push({ type: 'rental_income', amount: rentalIncome, description: `Rental income - ${beach.name}`, beachId: beach.id, date: new Date(base.getFullYear(), base.getMonth(), Math.floor(Math.random() * 28) + 1), createdAt: new Date() });
+          financeRecords.push({ type: 'service_fee', amount: serviceFee, description: `Service fee - ${beach.name}`, beachId: beach.id, date: new Date(base.getFullYear(), base.getMonth(), Math.floor(Math.random() * 28) + 1), createdAt: new Date() });
         }
-        
-        // Add expenses
         const expensesCount = Math.floor(Math.random() * 6) + 5;
         for (let i = 0; i < expensesCount; i++) {
           const expenseAmount = Math.floor(Math.random() * 500) + 50;
-          financeRecords.push({
-            type: 'expense',
-            amount: expenseAmount,
-            description: `Maintenance and operations - ${beach.name}`,
-            beach: beach._id,
-            date: new Date(date.getFullYear(), date.getMonth(), Math.floor(Math.random() * 28) + 1)
-          });
+          financeRecords.push({ type: 'expense', amount: expenseAmount, description: `Maintenance and operations - ${beach.name}`, beachId: beach.id, date: new Date(base.getFullYear(), base.getMonth(), Math.floor(Math.random() * 28) + 1), createdAt: new Date() });
         }
-      });
+      }
     }
 
-    await Finance.insertMany(financeRecords);
+    if (financeRecords.length) await prisma.finance.createMany({ data: financeRecords });
 
-    // Create pending payout requests
     const payouts = beaches.slice(0, Math.min(4, beaches.length)).map((beach, idx) => ({
-      beach: beach._id,
+      beachId: beach.id,
       amount: Math.floor(Math.random() * 10000) + 5000,
       status: 'pending',
-      requestedDate: new Date(Date.now() - (idx * 86400000))
+      requestedDate: new Date(Date.now() - (idx * 86400000)),
+      createdAt: new Date()
     }));
+    if (payouts.length) await prisma.payout.createMany({ data: payouts });
 
-    await Payout.insertMany(payouts);
-
-    res.json({ 
-      message: 'Finance data seeded successfully',
-      financeRecords: financeRecords.length,
-      payouts: payouts.length
-    });
+    res.json({ message: 'Finance data seeded successfully', financeRecords: financeRecords.length, payouts: payouts.length });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

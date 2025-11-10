@@ -1,5 +1,5 @@
 import express from 'express';
-import Alert from '../models/Alert.js';
+import prisma from '../utils/prisma.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -9,10 +9,11 @@ const router = express.Router();
 // @access  Private
 router.get('/', protect, async (req, res) => {
   try {
-    const alerts = await Alert.find()
-      .populate('beach', 'name')
-      .sort({ createdAt: -1 })
-      .limit(20);
+    const alerts = await prisma.alert.findMany({
+      include: { beach: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 20
+    });
     res.json(alerts);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -24,7 +25,16 @@ router.get('/', protect, async (req, res) => {
 // @access  Private
 router.post('/', protect, async (req, res) => {
   try {
-    const alert = await Alert.create(req.body);
+    const { type, message, beachId } = req.body;
+    const alert = await prisma.alert.create({
+      data: {
+        type,
+        message,
+        beachId: beachId ? Number(beachId) : null,
+        isRead: false,
+        createdAt: new Date()
+      }
+    });
     res.status(201).json(alert);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -36,16 +46,11 @@ router.post('/', protect, async (req, res) => {
 // @access  Private
 router.put('/:id/read', protect, async (req, res) => {
   try {
-    const alert = await Alert.findByIdAndUpdate(
-      req.params.id,
-      { isRead: true },
-      { new: true }
-    );
-    if (!alert) {
-      return res.status(404).json({ message: 'Alert not found' });
-    }
+    const id = Number(req.params.id);
+    const alert = await prisma.alert.update({ where: { id }, data: { isRead: true } });
     res.json(alert);
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ message: 'Alert not found' });
     res.status(500).json({ message: error.message });
   }
 });
@@ -55,12 +60,11 @@ router.put('/:id/read', protect, async (req, res) => {
 // @access  Private
 router.delete('/:id', protect, async (req, res) => {
   try {
-    const alert = await Alert.findByIdAndDelete(req.params.id);
-    if (!alert) {
-      return res.status(404).json({ message: 'Alert not found' });
-    }
+    const id = Number(req.params.id);
+    await prisma.alert.delete({ where: { id } });
     res.json({ message: 'Alert removed' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ message: 'Alert not found' });
     res.status(500).json({ message: error.message });
   }
 });

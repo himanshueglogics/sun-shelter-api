@@ -1,5 +1,5 @@
 import express from 'express';
-import Integration from '../models/Integration.js';
+import prisma from '../utils/prisma.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -9,7 +9,7 @@ const router = express.Router();
 // @access  Private
 router.get('/', protect, async (req, res) => {
   try {
-    const list = await Integration.find().sort({ createdAt: -1 });
+    const list = await prisma.integration.findMany({ orderBy: { createdAt: 'desc' } });
     res.json(list);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -21,7 +21,7 @@ router.get('/', protect, async (req, res) => {
 // @access  Private
 router.post('/', protect, async (req, res) => {
   try {
-    const integration = await Integration.create(req.body);
+    const integration = await prisma.integration.create({ data: req.body });
     res.status(201).json(integration);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -33,14 +33,11 @@ router.post('/', protect, async (req, res) => {
 // @access  Private
 router.put('/:id', protect, async (req, res) => {
   try {
-    const integration = await Integration.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true, runValidators: true }
-    );
-    if (!integration) return res.status(404).json({ message: 'Integration not found' });
+    const id = Number(req.params.id);
+    const integration = await prisma.integration.update({ where: { id }, data: req.body });
     res.json(integration);
   } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ message: 'Integration not found' });
     res.status(500).json({ message: e.message });
   }
 });
@@ -50,11 +47,11 @@ router.put('/:id', protect, async (req, res) => {
 // @access  Private
 router.delete('/:id', protect, async (req, res) => {
   try {
-    const integration = await Integration.findById(req.params.id);
-    if (!integration) return res.status(404).json({ message: 'Integration not found' });
-    await integration.deleteOne();
+    const id = Number(req.params.id);
+    await prisma.integration.delete({ where: { id } });
     res.json({ message: 'Integration removed' });
   } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ message: 'Integration not found' });
     res.status(500).json({ message: e.message });
   }
 });

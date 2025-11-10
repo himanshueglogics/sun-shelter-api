@@ -1,13 +1,13 @@
-import Beach from '../models/Beach.js';
-import User from '../models/User.js';
+import prisma from '../utils/prisma.js';
 
 class BeachService {
-  // Helper to build sunbeds grid
-  buildSunbeds(rows = 0, cols = 0) {
+  // Helper to build sunbeds grid (unique per beach by zone prefix)
+  buildSunbeds(rows = 0, cols = 0, zoneId = null) {
     const beds = [];
     for (let r = 1; r <= rows; r++) {
       for (let c = 1; c <= cols; c++) {
-        beds.push({ code: `R${r}C${c}`, row: r, col: c, status: 'available' });
+        const code = zoneId ? `Z${zoneId}-R${r}C${c}` : `R${r}C${c}`;
+        beds.push({ code, row: r, col: c, status: 'available' });
       }
     }
     return beds;
@@ -16,18 +16,30 @@ class BeachService {
   // Get all beaches with pagination
   async getAllBeaches(page = 1, limit = 10, search = '') {
     const skip = (page - 1) * limit;
-    const query = search ? { name: { $regex: search, $options: 'i' } } : {};
+    const where = search
+      ? { name: { contains: search, mode: 'insensitive' } }
+      : {};
 
-    const beaches = await Beach.find(query)
-      .populate('admins', '-password')
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
+    const [beaches, total] = await Promise.all([
+      prisma.beach.findMany({
+        where,
+        include: {
+          beachAdmins: { include: { user: { select: { id: true, name: true, email: true, role: true } } } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.beach.count({ where })
+    ]);
 
-    const total = await Beach.countDocuments(query);
+    const mapped = beaches.map(b => ({
+      ...b,
+      admins: (b.beachAdmins || []).map(ba => ba.user)
+    }));
 
     return {
-      beaches,
+      beaches: mapped,
       currentPage: page,
       totalPages: Math.ceil(total / limit),
       totalBeaches: total
@@ -36,249 +48,278 @@ class BeachService {
 
   // Get occupancy overview for all beaches
   async getOccupancyOverview() {
-    const beaches = await Beach.find();
+    const beaches = await prisma.beach.findMany();
     return beaches.map(b => ({
-      beachId: b._id,
+      beachId: b.id,
       name: b.name,
       occupancyRate: b.occupancyRate || 0,
-      capacity: b.capacity || 0,
+      capacity: b.totalCapacity || 0,
       currentBookings: b.currentBookings || 0
     }));
   }
 
   // Get beach stats summary
   async getStatsSummary() {
-    const totalBeaches = await Beach.countDocuments();
-    const activeAdmins = await User.countDocuments();
+    const [totalBeaches, activeAdmins] = await Promise.all([
+      prisma.beach.count(),
+      prisma.user.count()
+    ]);
     return { totalBeaches, activeAdmins };
   }
 
   // Get single beach by ID
   async getBeachById(id) {
-    const beach = await Beach.findById(id).populate('admins', '-password');
-    if (!beach) {
-      throw new Error('Beach not found');
-    }
-    return beach;
+    const numericId = Number(id);
+    const beach = await prisma.beach.findUnique({
+      where: { id: numericId },
+      include: {
+        beachAdmins: { include: { user: { select: { id: true, name: true, email: true, role: true } } } },
+        zones: {include: {sunbeds: true}}  
+      }
+    });
+    if (!beach) throw new Error('Beach not found');
+    return { ...beach, admins: beach.beachAdmins.map(ba => ba.user) };
+    
   }
 
   async assignAdmin(beachId, userId) {
-    const beach = await Beach.findById(beachId);
+    const bId = Number(beachId);
+    const uId = Number(userId);
+    const [beach, user] = await Promise.all([
+      prisma.beach.findUnique({ where: { id: bId } }),
+      prisma.user.findUnique({ where: { id: uId } })
+    ]);
     if (!beach) throw new Error('Beach not found');
-    const user = await User.findById(userId);
     if (!user) throw new Error('User not found');
 
-    const existsHere = (beach.admins || []).some(a => String(a) === String(userId));
-    if (existsHere) {
-      throw new Error('Admin already assigned to this beach');
-    }
+    const existsHere = await prisma.beachAdmin.findUnique({ where: { beachId_userId: { beachId: bId, userId: uId } } });
+    if (existsHere) throw new Error('Admin already assigned to this beach');
 
-    const otherBeach = await Beach.findOne({ _id: { $ne: beachId }, admins: userId });
-    if (otherBeach) {
-      throw new Error('Admin already assigned to another beach');
-    }
+    const other = await prisma.beachAdmin.findFirst({ where: { userId: uId, beachId: { not: bId } } });
+    if (other) throw new Error('Admin already assigned to another beach');
 
-    beach.admins.push(userId);
-    await beach.save();
-    return await Beach.findById(beachId).populate('admins', '-password');
+    await prisma.beachAdmin.create({ data: { beachId: bId, userId: uId } });
+    const updated = await prisma.beach.findUnique({
+      where: { id: bId },
+      include: { beachAdmins: { include: { user: { select: { id: true, name: true, email: true, role: true } } } } }
+    });
+    return { ...updated, admins: updated.beachAdmins.map(ba => ba.user) };
   }
 
   async assignAdmins(beachId, userIds = []) {
-    const beach = await Beach.findById(beachId);
-    if (!beach) throw new Error('Beach not found');
-
-    const uniqueIds = [...new Set(userIds.map(String))];
+    const bId = Number(beachId);
+    const uniqueIds = [...new Set(userIds.map(u => Number(u)))];
     const assigned = [];
     const skipped = [];
 
-    for (const uid of uniqueIds) {
-      const user = await User.findById(uid);
-      if (!user) {
-        skipped.push({ userId: uid, reason: 'User not found' });
-        continue;
-      }
-      const existsHere = (beach.admins || []).some(a => String(a) === String(uid));
-      if (existsHere) {
-        skipped.push({ userId: uid, reason: 'Admin already assigned to this beach' });
-        continue;
-      }
-      const otherBeach = await Beach.findOne({ _id: { $ne: beachId }, admins: uid });
-      if (otherBeach) {
-        skipped.push({ userId: uid, reason: 'Admin already assigned to another beach' });
-        continue;
-      }
-      beach.admins.push(uid);
-      assigned.push(uid);
+    const beach = await prisma.beach.findUnique({ where: { id: bId } });
+    if (!beach) throw new Error('Beach not found');
+
+    for (const uId of uniqueIds) {
+      console.log('assignAdmins called with:', { beachId, userIds });
+
+      const user = await prisma.user.findUnique({ where: { id: uId } });
+      if (!user) { skipped.push({ userId: uId, reason: 'User not found' }); continue; }
+      const existsHere = await prisma.beachAdmin.findUnique({ where: { beachId_userId: { beachId: bId, userId: uId } } });
+      if (existsHere) { skipped.push({ userId: uId, reason: 'Admin already assigned to this beach' }); continue; }
+      const other = await prisma.beachAdmin.findFirst({ where: { userId: uId, beachId: { not: bId } } });
+      if (other) { skipped.push({ userId: uId, reason: 'Admin already assigned to another beach' }); continue; }
+      await prisma.beachAdmin.create({ data: { beachId: bId, userId: uId } });
+      assigned.push(uId);
     }
 
-    if (assigned.length > 0) {
-      await beach.save();
-    }
-
-    const populated = await Beach.findById(beachId).populate('admins', '-password');
-    return { beach: populated, assigned, skipped };
+    const updated = await prisma.beach.findUnique({
+      where: { id: bId },
+      include: { beachAdmins: { include: { user: { select: { id: true, name: true, email: true, role: true } } } } }
+    });
+    return { beach: { ...updated, admins: updated.beachAdmins.map(ba => ba.user) }, assigned, skipped };
   }
 
   // Remove an admin user from a beach
   async removeAdmin(beachId, userId) {
-    const beach = await Beach.findById(beachId);
-    if (!beach) throw new Error('Beach not found');
-    beach.admins = (beach.admins || []).filter(a => String(a) !== String(userId));
-    await beach.save();
-    return await Beach.findById(beachId).populate('admins', '-password');
+    const bId = Number(beachId);
+    const uId = Number(userId);
+    await prisma.beachAdmin.delete({ where: { beachId_userId: { beachId: bId, userId: uId } } });
+    const updated = await prisma.beach.findUnique({
+      where: { id: bId },
+      include: { beachAdmins: { include: { user: { select: { id: true, name: true, email: true, role: true } } } } }
+    });
+    return { ...updated, admins: updated.beachAdmins.map(ba => ba.user) };
   }
 
   // Create new beach
   async createBeach(data) {
-    const beach = new Beach(data);
-    await beach.save();
-    return beach;
+    const created = await prisma.beach.create({ data });
+    return created;
   }
 
   // Update beach
   async updateBeach(id, data) {
-    const beach = await Beach.findById(id);
-    if (!beach) {
-      throw new Error('Beach not found');
-    }
-
-    Object.assign(beach, data);
-    await beach.save();
-    return beach;
+    const numericId = Number(id);
+    const updated = await prisma.beach.update({ where: { id: numericId }, data });
+    return updated;
   }
 
-  // Delete beach
+  // Delete beach (transactional: clear dependent rows to satisfy FKs)
   async deleteBeach(id) {
-    const beach = await Beach.findById(id);
-    if (!beach) {
-      throw new Error('Beach not found');
-    }
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId)) throw new Error('Invalid beach id');
 
-    await beach.deleteOne();
-    return { message: 'Beach deleted successfully' };
+    // In MySQL, relations without onDelete will RESTRICT; we must delete dependents first.
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Collect booking ids for this beach
+        const bookings = await tx.booking.findMany({
+          where: { beachId: numericId },
+          select: { id: true },
+        });
+        const bookingIds = bookings.map(b => b.id);
+
+        if (bookingIds.length) {
+          // Delete finance rows linked to these bookings first (avoid RESTRICT on Booking)
+          await tx.finance.deleteMany({ where: { bookingId: { in: bookingIds } } });
+          // BookingSunbed rows are set to onDelete: Cascade from Booking, so removing bookings will clear them
+          await tx.booking.deleteMany({ where: { id: { in: bookingIds } } });
+        }
+
+        // Beach-level dependents
+        await tx.finance.deleteMany({ where: { beachId: numericId } });
+        await tx.payout.deleteMany({ where: { beachId: numericId } });
+        await tx.alert.deleteMany({ where: { beachId: numericId } });
+
+        // Zones, Sunbeds, BeachAdmins have onDelete: Cascade in schema
+        await tx.beach.delete({ where: { id: numericId } });
+      });
+      return { message: 'Beach deleted successfully' };
+    } catch (e) {
+      if (e.code === 'P2025') {
+        throw new Error('Beach not found');
+      }
+      throw e;
+    }
   }
 
   // Add zone to beach
   async addZone(beachId, zoneData) {
-    const beach = await Beach.findById(beachId);
-    if (!beach) {
-      throw new Error('Beach not found');
-    }
+    const bId = Number(beachId);
+    const beach = await prisma.beach.findUnique({ where: { id: bId } });
+    if (!beach) throw new Error('Beach not found');
 
     const { name, rows, cols, sunbeds } = zoneData;
+    const createdZone = await prisma.zone.create({ data: { name, rows: rows || 0, cols: cols || 0, beachId: bId } });
 
-    // Use provided sunbeds if available, otherwise generate default ones
-    const zoneSunbeds = sunbeds && sunbeds.length > 0
-      ? sunbeds.map(bed => ({
-        code: bed.code || `R${bed.row}C${bed.col}`,
-        row: bed.row,
-        col: bed.col,
-        status: bed.status || 'available',
-        priceModifier: bed.priceModifier || 0
-      }))
-      : this.buildSunbeds(rows, cols);
+    const beds = (sunbeds && sunbeds.length > 0 ? sunbeds : this.buildSunbeds(rows, cols, createdZone.id)).map(b => ({
+      code: b.code || `Z${createdZone.id}-R${b.row}C${b.col}`,
+      row: b.row,
+      col: b.col,
+      status: b.status || 'available',
+      priceModifier: b.priceModifier || 0,
+      beachId: bId,
+      zoneId: createdZone.id
+    }));
+    if (beds.length) await prisma.sunbed.createMany({ data: beds });
 
-    const zone = { name, rows, cols, sunbeds: zoneSunbeds };
-    beach.zones.push(zone);
-    beach.recomputeCapacity();
-    await beach.save();
+    const newCapacity = await prisma.sunbed.count({ where: { beachId: bId } });
+    await prisma.beach.update({ where: { id: bId }, data: { totalCapacity: newCapacity } });
+    // Recompute occupancyRate based on occupied sunbeds (reserved/selected)
+    const occupiedAdd = await prisma.sunbed.count({ where: { beachId: bId, status: { in: ['reserved', 'selected'] } } });
+    const denomAdd = Number(newCapacity || 0);
+    const newOccAdd = denomAdd > 0 ? Math.round((occupiedAdd / denomAdd) * 100) : 0;
+    await prisma.beach.update({ where: { id: bId }, data: { occupancyRate: newOccAdd } });
 
-    return beach;
+    const updated = await prisma.beach.findUnique({ where: { id: bId }, include: { zones: true, sunbeds: true } });
+    return updated;
   }
 
   // Update zone
   async updateZone(beachId, zoneId, updateData) {
-    const beach = await Beach.findById(beachId);
-    if (!beach) {
-      throw new Error('Beach not found');
-    }
-
-    const zone = beach.zones.id(zoneId);
-    if (!zone) {
-      throw new Error('Zone not found');
-    }
+    const bId = Number(beachId);
+    const zId = Number(zoneId);
+    const zone = await prisma.zone.findUnique({ where: { id: zId } });
+    if (!zone || zone.beachId !== bId) throw new Error('Zone not found');
 
     const { name, rows, cols, sunbeds } = updateData;
-
-    if (name !== undefined) zone.name = name;
-    if (rows !== undefined) zone.rows = rows;
-    if (cols !== undefined) zone.cols = cols;
-
-    // If sunbeds are provided, use them directly
-    if (sunbeds && Array.isArray(sunbeds) && sunbeds.length > 0) {
-      zone.sunbeds = sunbeds.map(bed => ({
-        _id: bed._id, // Preserve existing _id if available
-        code: bed.code || `R${bed.row}C${bed.col}`,
-        row: bed.row,
-        col: bed.col,
-        status: bed.status || 'available',
-        priceModifier: bed.priceModifier || 0
-      }));
-    } else if (rows !== undefined || cols !== undefined) {
-      // Preserve existing sunbed selections when dimensions change
-      const existingBeds = zone.sunbeds || [];
-      const newBeds = [];
-      for (let r = 1; r <= zone.rows; r++) {
-        for (let c = 1; c <= zone.cols; c++) {
-          const existing = existingBeds.find(b => b.row === r && b.col === c);
-          if (existing) {
-            // Keep existing bed with its status
-            newBeds.push(existing);
-          } else {
-            // Add new bed as available
-            newBeds.push({ code: `R${r}C${c}`, row: r, col: c, status: 'available' });
-          }
-        }
-      }
-      zone.sunbeds = newBeds;
+    if (name !== undefined || rows !== undefined || cols !== undefined) {
+      await prisma.zone.update({ where: { id: zId }, data: { name, rows, cols } });
     }
 
-    beach.recomputeCapacity();
-    await beach.save();
+    if (sunbeds && Array.isArray(sunbeds)) {
+      await prisma.sunbed.deleteMany({ where: { zoneId: zId } });
+      const beds = sunbeds.map(b => ({
+        code: b.code || `Z${zId}-R${b.row}C${b.col}`,
+        row: b.row,
+        col: b.col,
+        status: b.status || 'available',
+        priceModifier: b.priceModifier || 0,
+        beachId: bId,
+        zoneId: zId
+      }));
+      if (beds.length) await prisma.sunbed.createMany({ data: beds });
+    } else if (rows !== undefined || cols !== undefined) {
+      await prisma.sunbed.deleteMany({ where: { zoneId: zId } });
+      const z = await prisma.zone.findUnique({ where: { id: zId } });
+      const beds = this.buildSunbeds(z.rows, z.cols, zId).map(b => ({
+        code: b.code,
+        row: b.row,
+        col: b.col,
+        status: b.status,
+        priceModifier: 0,
+        beachId: bId,
+        zoneId: zId
+      }));
+      if (beds.length) await prisma.sunbed.createMany({ data: beds });
+    }
 
-    return { beach, zone };
+    const newCapacity = await prisma.sunbed.count({ where: { beachId: bId } });
+    await prisma.beach.update({ where: { id: bId }, data: { totalCapacity: newCapacity } });
+
+    // Recompute occupancyRate based on occupied sunbeds (reserved/selected)
+    const occupied = await prisma.sunbed.count({ where: { beachId: bId, status: { in: ['reserved', 'selected'] } } });
+    const denom = Number(newCapacity || 0);
+    const newOcc = denom > 0 ? Math.round((occupied / denom) * 100) : 0;
+    await prisma.beach.update({ where: { id: bId }, data: { occupancyRate: newOcc } });
+
+    const updatedBeach = await prisma.beach.findUnique({ where: { id: bId }, include: { zones: true } });
+    const updatedZone = await prisma.zone.findUnique({ where: { id: zId }, include: { sunbeds: true } });
+    return { beach: updatedBeach, zone: updatedZone };
   }
 
   // Delete zone
   async deleteZone(beachId, zoneId) {
-    const beach = await Beach.findById(beachId);
-    if (!beach) {
-      throw new Error('Beach not found');
-    }
-
-    const zone = beach.zones.id(zoneId);
-    if (!zone) {
-      throw new Error('Zone not found');
-    }
-
-    zone.remove();
-    beach.recomputeCapacity();
-    await beach.save();
-
-    return beach;
+    const bId = Number(beachId);
+    const zId = Number(zoneId);
+    const zone = await prisma.zone.findUnique({ where: { id: zId } });
+    if (!zone || zone.beachId !== bId) throw new Error('Zone not found');
+    await prisma.sunbed.deleteMany({ where: { zoneId: zId } });
+    await prisma.zone.delete({ where: { id: zId } });
+    const newCapacity = await prisma.sunbed.count({ where: { beachId: bId } });
+    await prisma.beach.update({ where: { id: bId }, data: { totalCapacity: newCapacity } });
+    // Recompute occupancyRate after capacity change based on occupied sunbeds
+    const occupiedDel = await prisma.sunbed.count({ where: { beachId: bId, status: { in: ['reserved', 'selected'] } } });
+    const denomDel = Number(newCapacity || 0);
+    const newOccDel = denomDel > 0 ? Math.round((occupiedDel / denomDel) * 100) : 0;
+    await prisma.beach.update({ where: { id: bId }, data: { occupancyRate: newOccDel } });
+    const updated = await prisma.beach.findUnique({ where: { id: bId }, include: { zones: true, sunbeds: true } });
+    return updated;
   }
 
   // Update sunbed status
   async updateSunbedStatus(beachId, zoneId, sunbedId, status) {
-    const beach = await Beach.findById(beachId);
-    if (!beach) {
-      throw new Error('Beach not found');
-    }
-
-    const zone = beach.zones.id(zoneId);
-    if (!zone) {
-      throw new Error('Zone not found');
-    }
-
-    const bed = zone.sunbeds.id(sunbedId);
-    if (!bed) {
-      throw new Error('Sunbed not found');
-    }
-
-    if (status) bed.status = status;
-    await beach.save();
-
-    return { beach, zone, bed };
+    const bId = Number(beachId);
+    const zId = Number(zoneId);
+    const sId = Number(sunbedId);
+    const bed = await prisma.sunbed.findUnique({ where: { id: sId } });
+    if (!bed || bed.beachId !== bId || bed.zoneId !== zId) throw new Error('Sunbed not found');
+    const updated = await prisma.sunbed.update({ where: { id: sId }, data: { status } });
+    // Recompute occupancyRate after a bed status change
+    const [total, occupied] = await Promise.all([
+      prisma.sunbed.count({ where: { beachId: bId } }),
+      prisma.sunbed.count({ where: { beachId: bId, status: { in: ['reserved', 'selected'] } } })
+    ]);
+    const newOcc = total > 0 ? Math.round((occupied / total) * 100) : 0;
+    const beach = await prisma.beach.update({ where: { id: bId }, data: { occupancyRate: newOcc } });
+    const zone = await prisma.zone.findUnique({ where: { id: zId } });
+    return { beach, zone, bed: updated };
   }
 }
 

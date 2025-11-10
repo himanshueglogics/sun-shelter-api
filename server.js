@@ -1,5 +1,5 @@
 import express from 'express';
-import mongoose from 'mongoose';
+import prisma from './utils/prisma.js';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import http from 'http';
@@ -17,16 +17,12 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Database connection
-mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB Connected'))
-  .catch((err) => console.log('MongoDB Error:', err));
+
 
 app.use('/api/auth', authRouter);
 app.use('/api/alerts', alertsRouter);
@@ -37,14 +33,29 @@ app.use('/api/finance', financeRouter);
 app.use('/api/admins', adminsRouter);
 app.use('/api/integrations', integrationsRouter);
 
-// Health check
-app.get('/', (req, res) => {
-  res.json({ message: 'Sun Shelter API is running' });
+
+app.use((err, req, res, next) => {
+  const msg = err?.message || 'Server error';
+  const code = /not found/i.test(msg)
+    ? 404
+    : /exists|duplicate|unique/i.test(msg)
+    ? 409
+    : 400;
+  res.status(code).json({ message: msg });
+});
+
+
+app.get('/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 const PORT = process.env.PORT || 5000;
 
-// --- Socket.IO Setup ---
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
@@ -53,11 +64,10 @@ const io = new SocketIOServer(server, {
   }
 });
 
-// Expose io for routes to emit events
+
 app.set('io', io);
 
 io.on('connection', (socket) => {
-  // Join a specific beach room to receive updates
   socket.on('joinBeach', (beachId) => {
     if (beachId) socket.join(`beach:${beachId}`);
   });
@@ -66,7 +76,7 @@ io.on('connection', (socket) => {
     if (beachId) socket.leave(`beach:${beachId}`);
   });
 
-  socket.on('disconnect', () => {});
+  socket.on('disconnect', () => { });
 });
 
 server.listen(PORT, () => {

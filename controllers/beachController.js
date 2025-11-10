@@ -104,6 +104,26 @@ class BeachController {
   async addZone(req, res) {
     try {
       const beach = await beachService.addZone(req.params.id, req.body);
+      // Emit occupancy update (and zone list refresh) so dashboards update immediately
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          io.to(`beach:${beach.id}`).emit('beach:occupancy', {
+            beachId: Number(beach.id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.totalCapacity,
+            status: beach.status
+          });
+          io.emit('beach:occupancy', {
+            beachId: Number(beach.id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.totalCapacity,
+            status: beach.status
+          });
+        }
+      } catch (_) { }
       res.status(201).json(beach);
     } catch (error) {
       if (error.message === 'Beach not found') {
@@ -128,15 +148,15 @@ class BeachController {
       try {
         const io = req.app.get('io');
         if (io) {
-          io.to(`beach:${beach._id}`).emit('zone:update', {
-            beachId: String(beach._id),
+          io.to(`beach:${beach.id}`).emit('zone:update', {
+            beachId: String(beach.id),
             zone: {
-              _id: String(zone._id),
+              id: Number(zone.id),
               name: zone.name,
               rows: zone.rows,
               cols: zone.cols,
-              sunbeds: zone.sunbeds.map(b => ({
-                _id: String(b._id),
+              sunbeds: (zone.sunbeds || []).map(b => ({
+                id: Number(b.id),
                 code: b.code,
                 row: b.row,
                 col: b.col,
@@ -144,11 +164,18 @@ class BeachController {
               }))
             }
           });
-          io.to(`beach:${beach._id}`).emit('beach:occupancy', {
-            beachId: String(beach._id),
+          io.to(`beach:${beach.id}`).emit('beach:occupancy', {
+            beachId: Number(beach.id),
             occupancyRate: beach.occupancyRate,
             currentBookings: beach.currentBookings,
-            capacity: beach.capacity,
+            capacity: beach.totalCapacity,
+            status: beach.status
+          });
+          io.emit('beach:occupancy', {
+            beachId: Number(beach.id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.totalCapacity,
             status: beach.status
           });
         }
@@ -169,6 +196,26 @@ class BeachController {
   async deleteZone(req, res) {
     try {
       const beach = await beachService.deleteZone(req.params.id, req.params.zoneId);
+      // Emit occupancy update so dashboards update after deletion
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          io.to(`beach:${beach.id}`).emit('beach:occupancy', {
+            beachId: Number(beach.id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.totalCapacity,
+            status: beach.status
+          });
+          io.emit('beach:occupancy', {
+            beachId: Number(beach.id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.totalCapacity,
+            status: beach.status
+          });
+        }
+      } catch (_) { }
       res.json(beach);
     } catch (error) {
       if (error.message === 'Beach not found' || error.message === 'Zone not found') {
@@ -237,11 +284,11 @@ class BeachController {
       try {
         const io = req.app.get('io');
         if (io) {
-          io.to(`beach:${beach._id}`).emit('sunbed:update', {
-            beachId: String(beach._id),
-            zoneId: String(zone._id),
+          io.to(`beach:${beach.id}`).emit('sunbed:update', {
+            beachId: Number(beach.id),
+            zoneId: Number(zone.id),
             sunbed: {
-              _id: String(bed._id),
+              id: Number(bed.id),
               code: bed.code,
               row: bed.row,
               col: bed.col,
@@ -249,11 +296,19 @@ class BeachController {
             },
             actorId
           });
-          io.to(`beach:${beach._id}`).emit('beach:occupancy', {
-            beachId: String(beach._id),
+          io.to(`beach:${beach.id}`).emit('beach:occupancy', {
+            beachId: Number(beach.id),
             occupancyRate: beach.occupancyRate,
             currentBookings: beach.currentBookings,
-            capacity: beach.capacity,
+            capacity: beach.totalCapacity,
+            status: beach.status,
+            actorId
+          });
+          io.emit('beach:occupancy', {
+            beachId: Number(beach.id),
+            occupancyRate: beach.occupancyRate,
+            currentBookings: beach.currentBookings,
+            capacity: beach.totalCapacity,
             status: beach.status,
             actorId
           });

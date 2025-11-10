@@ -1,5 +1,6 @@
 import express from 'express';
-import User from '../models/User.js';
+import bcrypt from 'bcryptjs';
+import prisma from '../utils/prisma.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -26,7 +27,10 @@ const requireSuper = (req, res, next) => {
 // @access  Private
 router.get('/', protect, async (req, res) => {
   try {
-    const admins = await User.find({}, '-password').sort({ createdAt: -1 });
+    const admins = await prisma.user.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, name: true, email: true, role: true, createdAt: true }
+    });
     res.json(admins);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -39,12 +43,14 @@ router.get('/', protect, async (req, res) => {
 router.post('/', protect, requireSuper, async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
-    const exists = await User.findOne({ email });
+    const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) return res.status(400).json({ message: 'User already exists' });
-    const user = await User.create({ email, password, name, role: role || 'admin' });
-    const json = user.toObject();
-    delete json.password;
-    res.status(201).json(json);
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: { email, password: hashed, name, role: role || 'admin', createdAt: new Date() },
+      select: { id: true, name: true, email: true, role: true, createdAt: true }
+    });
+    res.status(201).json(user);
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -55,12 +61,13 @@ router.post('/', protect, requireSuper, async (req, res) => {
 // @access  Private
 router.put('/:id', protect, requireSuper, async (req, res) => {
   try {
+    const id = Number(req.params.id);
     const allowed = ['name', 'role'];
-    const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
-    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).select('-password');
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    const data = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
+    const user = await prisma.user.update({ where: { id }, data, select: { id: true, name: true, email: true, role: true, createdAt: true } });
     res.json(user);
   } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ message: 'User not found' });
     res.status(500).json({ message: e.message });
   }
 });
@@ -70,15 +77,11 @@ router.put('/:id', protect, requireSuper, async (req, res) => {
 // @access  Private
 router.delete('/:id', protect, requireSuper, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const id = Number(req.params.id);
+    const user = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true } });
     if (!user) return res.status(404).json({ message: 'User not found' });
-    
-    // Prevent deleting super admin
-    if (user.role === 'super_admin') {
-      return res.status(403).json({ message: 'Cannot delete super admin account' });
-    }
-    
-    await user.deleteOne();
+    if (user.role === 'super_admin') return res.status(403).json({ message: 'Cannot delete super admin account' });
+    await prisma.user.delete({ where: { id } });
     res.json({ message: 'Admin removed' });
   } catch (e) {
     res.status(500).json({ message: e.message });

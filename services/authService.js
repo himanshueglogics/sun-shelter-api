@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import User from '../models/User.js';
+// import User from '../models/User.js';
+import bcrypt from 'bcryptjs';
+import prisma from '../utils/prisma.js';
+
 import sendEmail from '../utils/sendEmail.js';
 
 class AuthService {
@@ -18,9 +21,11 @@ class AuthService {
       .update(resetToken)
       .digest('hex');
 
-    const user = await User.findOne({
-      resetPasswordToken,
-      resetPasswordExpire: { $gt: Date.now() }
+    const user = await prisma.user.findFirst({
+      where: {
+        resetPasswordToken,
+        resetPasswordExpire: { gt: new Date() }
+      }
     });
 
     if (!user) {
@@ -34,25 +39,29 @@ class AuthService {
     const { name, email, password, role } = userData;
     
     // Check if user exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       throw new Error('User already exists');
     }
 
-    // Create user
-    const user = await User.create({
-      name,
-      email,
-      password,
-      role: role || 'admin'
+    // Create user (hash password)
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        name: name || 'Admin User',
+        email,
+        password: hashed,
+        role: role || 'admin',
+        createdAt: new Date()
+      }
     });
 
-    const token = this.generateToken(user._id);
+    const token = this.generateToken(user.id);
 
     return {
       token,
       user: {
-        _id: user._id,
+        _id: user.id,
         name: user.name,
         email: user.email,
         role: user.role
@@ -63,13 +72,13 @@ class AuthService {
   // Login user
   async login(email, password) {
     // Check for user
-    const user = await User.findOne({ email }).select('+password');
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       throw new Error('Invalid credentials');
     }
 
     // Check password
-    const isMatch = await user.comparePassword(password);
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       throw new Error('Invalid credentials');
     }
@@ -79,12 +88,12 @@ class AuthService {
       throw new Error('Not authorized');
     }
 
-    const token = this.generateToken(user._id);
+    const token = this.generateToken(user.id);
 
     return {
       token,
       user: {
-        _id: user._id,
+        _id: user.id,
         name: user.name,
         email: user.email,
         role: user.role
@@ -94,7 +103,8 @@ class AuthService {
 
   // Get current user
   async getCurrentUser(userId) {
-    const user = await User.findById(userId);
+    const id = typeof userId === 'string' ? Number(userId) : userId;
+    const user = await prisma.user.findUnique({ where: { id } });
     if (!user) {
       throw new Error('User not found');
     }
@@ -103,7 +113,7 @@ class AuthService {
 
   // Forgot password
   async forgotPassword(email, baseUrl) {
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       throw new Error('User not found');
     }
@@ -113,19 +123,16 @@ class AuthService {
       throw new Error('Not authorized');
     }
 
-    // Generate reset token
+    // Generate reset token and persist via Prisma
     const resetToken = crypto.randomBytes(20).toString('hex');
-    
-    // Hash token and set to resetPasswordToken field
-    user.resetPasswordToken = crypto
-      .createHash('sha256')
-      .update(resetToken)
-      .digest('hex');
-    
-    // Set expire to 1 hour
-    user.resetPasswordExpire = Date.now() + 60 * 60 * 1000; // 1 hour
-    
-    await user.save({ validateBeforeSave: false });
+    const hashed = crypto.createHash('sha256').update(resetToken).digest('hex');
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetPasswordToken: hashed,
+        resetPasswordExpire: new Date(Date.now() + 60 * 60 * 1000)
+      }
+    });
 
     // Create reset url with safe base
     const clientBase = baseUrl || process.env.CLIENT_URL || 'http://localhost:3000';
@@ -169,9 +176,10 @@ class AuthService {
 
       return { message: 'Email sent' };
     } catch (err) {
-      user.resetPasswordToken = undefined;
-      user.resetPasswordExpire = undefined;
-      await user.save({ validateBeforeSave: false });
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { resetPasswordToken: null, resetPasswordExpire: null }
+      });
       throw new Error('Email could not be sent');
     }
   }
@@ -184,30 +192,33 @@ class AuthService {
       .update(resetToken)
       .digest('hex');
 
-    const user = await User.findOne({
-      resetPasswordToken,
-      resetPasswordExpire: { $gt: Date.now() }
+    const user = await prisma.user.findFirst({
+      where: {
+        resetPasswordToken,
+        resetPasswordExpire: { gt: new Date() }
+      }
     });
 
     if (!user) {
       throw new Error('Invalid or expired token');
     }
 
-    // Set new password
-    user.password = newPassword;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpire = undefined;
-    await user.save();
+    // Set new password (hash)
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { password: passwordHash, resetPasswordToken: null, resetPasswordExpire: null }
+    });
 
-    const token = this.generateToken(user._id);
+    const token = this.generateToken(updated.id);
 
     return {
       token,
       user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
+        _id: updated.id,
+        name: updated.name,
+        email: updated.email,
+        role: updated.role
       }
     };
   }
