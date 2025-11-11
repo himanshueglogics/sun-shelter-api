@@ -62,7 +62,11 @@ class BeachService {
   async getStatsSummary() {
     const [totalBeaches, activeAdmins] = await Promise.all([
       prisma.beach.count(),
-      prisma.user.count()
+      prisma.user.count({
+        where:{
+          role:{in:['admin','user']}
+        }
+      })
     ]);
     return { totalBeaches, activeAdmins };
   }

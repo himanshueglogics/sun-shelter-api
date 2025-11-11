@@ -28,8 +28,11 @@ const requireSuper = (req, res, next) => {
 router.get('/', protect, async (req, res) => {
   try {
     const admins = await prisma.user.findMany({
+      where: {
+        NOT: { role: 'super_admin' }
+      },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, email: true, role: true, createdAt: true }
+      select: { id: true, name: true, email: true,phone:true, role: true, createdAt: true }
     });
     res.json(admins);
   } catch (e) {
@@ -42,13 +45,13 @@ router.get('/', protect, async (req, res) => {
 // @access  Private
 router.post('/', protect, requireSuper, async (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, phone } = req.body;
     const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) return res.status(400).json({ message: 'User already exists' });
     const hashed = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { email, password: hashed, name, role: role || 'admin', createdAt: new Date() },
-      select: { id: true, name: true, email: true, role: true, createdAt: true }
+      data: { email, password: hashed, name,phone, role: role || 'admin', createdAt: new Date() },
+      select: { id: true, name: true, email: true,phone:true, role: true, createdAt: true }
     });
     res.status(201).json(user);
   } catch (e) {
@@ -64,7 +67,7 @@ router.put('/:id', protect, requireSuper, async (req, res) => {
     const id = Number(req.params.id);
     const allowed = ['name', 'role'];
     const data = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
-    const user = await prisma.user.update({ where: { id }, data, select: { id: true, name: true, email: true, role: true, createdAt: true } });
+    const user = await prisma.user.update({ where: { id }, data, select: { id: true, name: true, email: true,phone:true, role: true, createdAt: true } });
     res.json(user);
   } catch (e) {
     if (e.code === 'P2025') return res.status(404).json({ message: 'User not found' });
@@ -78,7 +81,7 @@ router.put('/:id', protect, requireSuper, async (req, res) => {
 router.delete('/:id', protect, requireSuper, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const user = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true } });
+    const user = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true,phone:true } });
     if (!user) return res.status(404).json({ message: 'User not found' });
     if (user.role === 'super_admin') return res.status(403).json({ message: 'Cannot delete super admin account' });
     await prisma.user.delete({ where: { id } });

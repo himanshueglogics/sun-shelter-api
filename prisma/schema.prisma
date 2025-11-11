@@ -68,6 +68,7 @@ model User {
   password            String
   role                Role      @default(admin)
   name                String    @default("Admin User")
+  phone               String?
   resetPasswordToken  String?
   resetPasswordExpire DateTime?
   createdAt           DateTime  @default(now())
