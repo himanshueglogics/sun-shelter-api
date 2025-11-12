@@ -181,6 +181,7 @@ model Booking {
 
   @@index([beachId])
   @@index([zoneId])
+  @@map("booking")
 }
 
 model BookingSunbed {

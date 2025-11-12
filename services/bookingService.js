@@ -19,9 +19,26 @@ class BookingService {
     if (status) where.status = status;
     if (beach) where.beachId = Number(beach);
     if (checkInFrom || checkInTo) {
-      where.checkInDate = {};
-      if (checkInFrom) where.checkInDate.gte = new Date(checkInFrom);
-      if (checkInTo) where.checkInDate.lte = new Date(checkInTo);
+      let fromDate=null;
+      let toDate=null;
+      if (checkInFrom){
+        fromDate=new Date(checkInFrom)
+        fromDate.setHours(0,0,0,0)
+      }
+      if (checkInTo){
+        toDate=new Date(checkInTo)
+        toDate.setHours(23,59,59,999)
+      }
+      if (fromDate && toDate){
+        where.AND=[
+          {checkInDate:{lte:toDate}},
+          {checkOutDate:{gte:fromDate}}
+        ]
+      }else if (fromDate){
+        where.checkInDate={gte:fromDate}
+      }else if (toDate){
+        where.checkOutDate={lte:toDate}
+      }
     }
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -31,7 +48,7 @@ class BookingService {
         include: {
           beach: { select: { id: true, name: true, location: true } },
           zone: { select: { id: true, name: true } },
-          sunbeds: { include: { sunbed: true } }
+          _count:{select : {sunbeds:true}}
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -56,16 +73,21 @@ class BookingService {
   // Get single booking by ID
   async getBookingById(id) {
     const bId = Number(id);
+    if (!id||isNaN(bId)){
+      throw new Error("Invalid Booking Id")
+    }
     const booking = await prisma.booking.findUnique({
       where: { id: bId },
       include: {
         beach: { select: { id: true, name: true, location: true } },
-        zone: { select: { id: true, name: true } },
-        sunbeds: { include: { sunbed: true } }
+        zone: { select: { id: true, name: true,rows:true,cols:true,sunbeds: {select: {id:true,row:true,col:true,code:true,status:true}} } },
+        sunbeds:{include:{sunbed:true}}
       }
     });
     if (!booking) throw new Error('Booking not found');
-    return { ...booking, sunbeds: booking.sunbeds.map(bs => bs.sunbed) };
+    const sunbedList = booking.sunbeds?.map(bs => bs.sunbed) || [];
+    
+    return { ...booking, sunbeds: sunbedList };
   }
 
   // Create new booking
@@ -103,7 +125,7 @@ class BookingService {
 
     await prisma.finance.create({
       data: {
-        type: 'booking',
+        type: 'rental_income',
         amount: Number(totalAmount || 0),
         description: `Booking for ${customerName}`,
         date: new Date(),
@@ -113,22 +135,71 @@ class BookingService {
     });
 
     return booking;
+  if (global.io) {
+  global.io.emit('booking:created', {
+    bookingId: booking.id,
+    beachId,
+    customerName,
+    checkInDate: booking.checkInDate,
+    checkOutDate: booking.checkOutDate,
+  });
+}
   }
 
   // Update booking
   async updateBooking(id, updateData) {
-    const bId = Number(id);
-    const booking = await prisma.booking.update({ where: { id: bId }, data: updateData });
-    return booking;
+     const bId = Number(id);
+  if (!bId || isNaN(bId)) throw new Error("Invalid booking ID");
+
+  // Extract only valid scalar fields
+  const safeData = {
+    customerName: updateData.customerName,
+    customerEmail: updateData.customerEmail,
+    customerPhone: updateData.customerPhone,
+    checkInDate: updateData.checkInDate ? new Date(updateData.checkInDate) : undefined,
+    checkOutDate: updateData.checkOutDate ? new Date(updateData.checkOutDate) : undefined,
+    numberOfGuests: Number(updateData.numberOfGuests || 0),
+    totalAmount: Number(updateData.totalAmount || 0),
+    status: updateData.status,
+    paymentStatus: updateData.paymentStatus,
+    beachId: updateData.beach?.id || updateData.beachId,
+    zoneId: updateData.zone?.id || updateData.zoneId,
+  };
+
+  // Remove undefined/null keys
+  Object.keys(safeData).forEach((key) => {
+    if (safeData[key] === undefined) delete safeData[key];
+  });
+
+  const booking = await prisma.booking.update({
+    where: { id: bId },
+    data: safeData,
+  });
+  return booking;
   }
 
   // Cancel booking
   async cancelBooking(id) {
     const bId = Number(id);
-    const booking = await prisma.booking.update({ where: { id: bId }, data: { status: 'cancelled' } });
-    const joins = await prisma.bookingSunbed.findMany({ where: { bookingId: bId } });
-    const sIds = joins.map(j => j.sunbedId);
-    if (sIds.length) await prisma.sunbed.updateMany({ where: { id: { in: sIds } }, data: { status: 'available' } });
+    const booking=await prisma.$transaction(async(tx)=>{
+      const booking = await tx.booking.findUnique({ where: { id: bId },include:{sunbeds:true} });
+      if(!booking) throw new Error('Booking not found');
+      const sunbedIds=booking.sunbeds.map(bs=>bs.sunbedId)
+      if (sunbedIds.length){
+      await tx.sunbed.updateMany({
+        where : {id: {in:sunbedIds}},data:{status:'available'}
+      })
+    }
+    await tx.booking.update({
+      where: {id:bId},data:{status:"cancelled"}
+    })
+    return booking;
+  })
+
+  if (global.io){
+    global.io.emit('booking:cancelled',{bookingId:bId,beachId:booking.beachId,freedSunbeds:booking.sunbeds.map(bs=>bs.sunbedId)})
+  }
+    
     return booking;
   }
 
