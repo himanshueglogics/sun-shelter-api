@@ -281,6 +281,13 @@ async function main() {
     console.log('ETL finished in', (Date.now() - started) + 'ms');
 }
 
-main()
-    .then(async () => { await prisma.$disconnect(); })
-    .catch(async (e) => { console.error('ETL failed:', e); await prisma.$disconnect(); process.exit(1); });
+(async () => {
+    try {
+        await main();
+    } catch (e) {
+        console.error('ETL failed:', e);
+        process.exit(1);
+    } finally {
+        await prisma.$disconnect();
+    }
+})();
