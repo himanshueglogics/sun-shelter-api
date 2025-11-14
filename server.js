@@ -18,7 +18,13 @@ dotenv.config();
 const app = express();
 
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:3000",
+    "https://wagonless-byron-noninclusively.ngrok-free.dev"
+  ],
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -59,8 +65,11 @@ const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE']
+    origin: [
+      "http://localhost:3000",
+      "https://wagonless-byron-noninclusively.ngrok-free.dev"
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE"]
   }
 });
 
