@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -73,11 +70,9 @@ model User {
   resetPasswordExpire DateTime?
   createdAt           DateTime  @default(now())
 
-  // Relations
   beachAdmins      BeachAdmin[]
   payoutsProcessed Payout[]     @relation("PayoutProcessedBy")
 
-  // Migration helper
   mongoId String? @unique
 }
 
@@ -95,7 +90,6 @@ model Beach {
   images          Json?
   createdAt       DateTime    @default(now())
 
-  // Relations
   zones       Zone[]
   alerts      Alert[]
   bookings    Booking[]
@@ -104,7 +98,6 @@ model Beach {
   beachAdmins BeachAdmin[]
   sunbeds     Sunbed[]
 
-  // Migration helper
   mongoId String? @unique
 }
 
@@ -114,15 +107,12 @@ model Zone {
   rows Int    @default(0)
   cols Int    @default(0)
 
-  // FKs
   beachId Int
   beach   Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
 
-  // Relations
   sunbeds  Sunbed[]
   bookings Booking[]
 
-  // Migration helper
   mongoId String? @unique
 
   @@index([beachId])
@@ -136,16 +126,13 @@ model Sunbed {
   status        SunbedStatus @default(available)
   priceModifier Float        @default(0)
 
-  // FKs
   beachId Int
   zoneId  Int
   beach   Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
   zone    Zone  @relation(fields: [zoneId], references: [id], onDelete: Cascade)
 
-  // Relations
   bookings BookingSunbed[]
 
-  // Migration helper
   mongoId String? @unique
 
   @@unique([beachId, code])
@@ -166,17 +153,14 @@ model Booking {
   paymentStatus  PaymentStatus @default(pending)
   createdAt      DateTime      @default(now())
 
-  // FKs
   beachId Int
   zoneId  Int?
   beach   Beach @relation(fields: [beachId], references: [id])
   zone    Zone? @relation(fields: [zoneId], references: [id])
 
-  // Relations
   sunbeds  BookingSunbed[]
   finances Finance[]
 
-  // Migration helper
   mongoId String? @unique
 
   @@index([beachId])
@@ -203,13 +187,11 @@ model Finance {
   date        DateTime    @default(now())
   createdAt   DateTime    @default(now())
 
-  // Optional FKs
   bookingId Int?
   beachId   Int?
   booking   Booking? @relation(fields: [bookingId], references: [id])
   beach     Beach?   @relation(fields: [beachId], references: [id])
 
-  // Migration helper
   mongoId String? @unique
 
   @@index([bookingId])
@@ -225,13 +207,11 @@ model Payout {
   notes         String?
   createdAt     DateTime     @default(now())
 
-  // FKs
   beachId       Int
   processedById Int?
   beach         Beach @relation(fields: [beachId], references: [id])
   processedBy   User? @relation("PayoutProcessedBy", fields: [processedById], references: [id])
 
-  // Migration helper
   mongoId String? @unique
 
   @@index([beachId])
@@ -245,11 +225,9 @@ model Alert {
   isRead    Boolean   @default(false)
   createdAt DateTime  @default(now())
 
-  // Optional FK
   beachId Int?
   beach   Beach? @relation(fields: [beachId], references: [id])
 
-  // Migration helper
   mongoId String? @unique
 
   @@index([beachId])
@@ -259,13 +237,16 @@ model Integration {
   id        Int      @id @default(autoincrement())
   name      String
   type      String
+  apiKey    String
   provider  String?
   enabled   Boolean  @default(false)
   settings  Json?
   createdAt DateTime @default(now())
 
-  // Migration helper
   mongoId String? @unique
+
+  
+  @@map("integration")   
 }
 
 model BeachAdmin {
@@ -277,6 +258,32 @@ model BeachAdmin {
 
   @@id([beachId, userId])
   @@index([userId])
+}
+
+model LegalDocument {
+  id         Int      @id @default(autoincrement())
+  type       String   @unique
+  content    String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+//
+// 📌 NEW MODEL ADDED FOR PAYMENT GATEWAY SETTINGS
+//
+
+model PaymentGateway {
+  id          Int      @id @default(autoincrement())
+  name        String   // e.g., "Stripe", "PayPal"
+  apiKey      String
+  secretKey   String
+  merchantId  String?
+  enabled     Boolean  @default(false)
+  settings    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name])
 }
 
 datasource db {

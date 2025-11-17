@@ -1,8 +1,8 @@
 import express from 'express'
-const router = express.Router();
 import prisma from '../utils/prisma.js';
 import { protect } from '../middleware/auth.js';
 
+const router = express.Router();
 // @route   GET /api/finance
 // @desc    Get all finance records
 // @access  Private

@@ -12,6 +12,7 @@ import bookingsRouter from './routes/bookings.js';
 import financeRouter from './routes/finance.js';
 import adminsRouter from './routes/admins.js';
 import integrationsRouter from './routes/integrations.js';
+import legalDocsRouter from './routes/legalDocs.js';
 
 dotenv.config();
 
@@ -38,6 +39,7 @@ app.use('/api/bookings', bookingsRouter);
 app.use('/api/finance', financeRouter);
 app.use('/api/admins', adminsRouter);
 app.use('/api/integrations', integrationsRouter);
+app.use('/api/legal-docs', legalDocsRouter);
 
 
 app.use((err, req, res, next) => {
